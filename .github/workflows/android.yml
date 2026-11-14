@@ -35,6 +35,22 @@ jobs:
           cp AndroidManifest.xml app/src/main/
           cp styles.xml app/src/main/res/values/
 
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("app/src/main/java/com/khubara/workshop/MainActivity.kt")
+          source = p.read_text(encoding="utf-8")
+
+          old = 'singleLine = type == "phone" || hintText.contains("السنة") || hintText.contains("العداد")'
+          new = 'setSingleLine(type == "phone" || hintText.contains("السنة") || hintText.contains("العداد"))'
+
+          if old not in source:
+              raise SystemExit("ERROR: Could not find the singleLine expression")
+
+          p.write_text(source.replace(old, new), encoding="utf-8")
+          print("MainActivity.kt compatibility fix applied successfully")
+          PY
+
           cat > build.gradle.kts <<'EOF'
           plugins {
               id("com.android.application") version "8.13.2" apply false
