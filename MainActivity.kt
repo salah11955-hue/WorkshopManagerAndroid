@@ -1,3 +1,4 @@
+
 package com.khubara.workshop
 
 import android.app.Activity
@@ -21,20 +22,11 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         db = WorkshopDb(this)
 
-        if (db.hasUsers()) {
-            showLogin()
-        } else {
-            showCreateAdmin()
-        }
+        if (db.hasUsers()) showLogin() else showCreateAdmin()
     }
 
-    // ---------- شاشة إنشاء المدير لأول مرة ----------
-
     private fun showCreateAdmin() {
-        authScreen(
-            "مرحباً بك",
-            "إنشاء حساب المدير لنظام خبراء هونداي وفورد"
-        )
+        authScreen("مرحباً بك", "إنشاء حساب المدير لنظام خبراء هونداي وفورد")
 
         val name = field("اسم المدير")
         val username = field("اسم المستخدم، مثال admin")
@@ -61,7 +53,6 @@ class MainActivity : Activity() {
                     name.text.toString(),
                     p
                 )
-
                 if (created) {
                     toast("تم إنشاء حساب المدير بنجاح")
                     showLogin()
@@ -72,13 +63,8 @@ class MainActivity : Activity() {
         }
     }
 
-    // ---------- شاشة تسجيل الدخول ----------
-
     private fun showLogin() {
-        authScreen(
-            "تسجيل الدخول",
-            "أدخل بيانات حسابك للمتابعة"
-        )
+        authScreen("تسجيل الدخول", "أدخل بيانات حسابك للمتابعة")
 
         val username = field("اسم المستخدم")
         val password = field("كلمة المرور", "password")
@@ -87,11 +73,7 @@ class MainActivity : Activity() {
         root.addView(password, matchWidth())
 
         addAction("دخول إلى النظام", gold) {
-            if (db.authenticate(
-                    username.text.toString(),
-                    password.text.toString()
-                )
-            ) {
+            if (db.authenticate(username.text.toString(), password.text.toString())) {
                 showDashboard()
             } else {
                 toast("اسم المستخدم أو كلمة المرور غير صحيحة")
@@ -142,8 +124,6 @@ class MainActivity : Activity() {
         }
         root.addView(subtitleView)
     }
-
-    // ---------- لوحة التحكم ----------
 
     private fun showDashboard() {
         root = LinearLayout(this).apply {
@@ -219,10 +199,7 @@ class MainActivity : Activity() {
         addAction("+ فتح أمر إصلاح", navy) { workOrderForm() }
         addAction("+ إضافة قطعة للمخزون", navy) { partForm() }
         addAction("عرض السجلات", Color.DKGRAY) { recordsDialog() }
-
-        addAction("تسجيل الخروج", Color.rgb(150, 45, 45)) {
-            showLogin()
-        }
+        addAction("تسجيل الخروج", Color.rgb(150, 45, 45)) { showLogin() }
 
         val note = TextView(this).apply {
             text = "الإصدار التأسيسي — البيانات محفوظة على الهاتف."
@@ -242,15 +219,8 @@ class MainActivity : Activity() {
             textSize = 16f
             setOnClickListener { action() }
         }
-        root.addView(
-            b,
-            matchWidth().apply {
-                setMargins(0, 7, 0, 7)
-            }
-        )
+        root.addView(b, matchWidth().apply { setMargins(0, 7, 0, 7) })
     }
-
-    // ---------- نماذج البيانات ----------
 
     private fun customerForm() {
         val name = field("اسم العميل")
@@ -262,14 +232,8 @@ class MainActivity : Activity() {
             if (name.text.isBlank() || phone.text.isBlank()) {
                 return@formDialog toast("أدخل الاسم ورقم الهاتف")
             }
-
             try {
-                db.addCustomer(
-                    name.text.toString(),
-                    phone.text.toString(),
-                    alt.text.toString(),
-                    address.text.toString()
-                )
+                db.addCustomer(name.text.toString(), phone.text.toString(), alt.text.toString(), address.text.toString())
                 done()
             } catch (_: Exception) {
                 toast("رقم الهاتف مسجل مسبقاً أو توجد بيانات غير صحيحة")
@@ -297,23 +261,13 @@ class MainActivity : Activity() {
         val vin = field("رقم الهيكل VIN (إلزامي)")
         val odo = field("عداد الكيلومترات الحالي")
 
-        formDialog(
-            "إضافة سيارة",
-            listOf(owner, make, model, year, engine, plate, vin, odo)
-        ) {
-            if (vin.text.isBlank()) {
-                return@formDialog toast("رقم الهيكل مطلوب")
-            }
-
+        formDialog("إضافة سيارة", listOf(owner, make, model, year, engine, plate, vin, odo)) {
+            if (vin.text.isBlank()) return@formDialog toast("رقم الهيكل مطلوب")
             try {
                 db.addVehicle(
                     customers[owner.selectedItemPosition].first,
-                    make.text.toString(),
-                    model.text.toString(),
-                    year.text.toString(),
-                    engine.text.toString(),
-                    plate.text.toString(),
-                    vin.text.toString(),
+                    make.text.toString(), model.text.toString(), year.text.toString(),
+                    engine.text.toString(), plate.text.toString(), vin.text.toString(),
                     odo.text.toString()
                 )
                 done()
@@ -339,18 +293,12 @@ class MainActivity : Activity() {
         val complaint = field("شكوى العميل")
         val diagnosis = field("التشخيص الفني الأولي")
 
-        formDialog(
-            "أمر إصلاح جديد",
-            listOf(vehicle, odo, complaint, diagnosis)
-        ) {
+        formDialog("أمر إصلاح جديد", listOf(vehicle, odo, complaint, diagnosis)) {
             val selected = vehicles[vehicle.selectedItemPosition]
-
             try {
                 db.addWorkOrder(
-                    selected.second,
-                    selected.first,
-                    odo.text.toString(),
-                    complaint.text.toString(),
+                    selected.second, selected.first,
+                    odo.text.toString(), complaint.text.toString(),
                     diagnosis.text.toString()
                 )
                 done()
@@ -368,22 +316,13 @@ class MainActivity : Activity() {
         val buy = field("سعر الشراء")
         val sell = field("سعر البيع")
 
-        formDialog(
-            "إضافة قطعة للمخزون",
-            listOf(number, name, qty, unit, buy, sell)
-        ) {
-            if (name.text.isBlank()) {
-                return@formDialog toast("اسم القطعة مطلوب")
-            }
-
+        formDialog("إضافة قطعة للمخزون", listOf(number, name, qty, unit, buy, sell)) {
+            if (name.text.isBlank()) return@formDialog toast("اسم القطعة مطلوب")
             try {
                 db.addPart(
-                    number.text.toString(),
-                    name.text.toString(),
-                    qty.text.toString(),
+                    number.text.toString(), name.text.toString(), qty.text.toString(),
                     unit.text.toString().ifBlank { "قطعة" },
-                    buy.text.toString(),
-                    sell.text.toString()
+                    buy.text.toString(), sell.text.toString()
                 )
                 done()
             } catch (_: Exception) {
@@ -392,32 +331,16 @@ class MainActivity : Activity() {
         }
     }
 
-    // ---------- عرض السجلات ----------
-
     private fun recordsDialog() {
-        val labels = arrayOf(
-            "العملاء",
-            "السيارات",
-            "أوامر الإصلاح",
-            "المخزون"
-        )
-
-        val tables = arrayOf(
-            "customers",
-            "vehicles",
-            "work_orders",
-            "parts"
-        )
+        val labels = arrayOf("العملاء", "السيارات", "أوامر الإصلاح", "المخزون")
+        val tables = arrayOf("customers", "vehicles", "work_orders", "parts")
 
         AlertDialog.Builder(this)
             .setTitle("السجلات")
             .setItems(labels) { _, which ->
                 val rows = db.recentRows(tables[which])
-                val text = if (rows.isEmpty()) {
-                    "لا توجد سجلات بعد"
-                } else {
-                    rows.joinToString("\n\n────────────\n\n")
-                }
+                val text = if (rows.isEmpty()) "لا توجد سجلات بعد"
+                else rows.joinToString("\n\n────────────\n\n")
 
                 AlertDialog.Builder(this)
                     .setTitle(labels[which])
@@ -429,35 +352,19 @@ class MainActivity : Activity() {
             .show()
     }
 
-    // ---------- أدوات مساعدة ----------
-
-    private fun field(
-        hintText: String,
-        type: String = "text"
-    ): EditText = EditText(this).apply {
-        hint = hintText
-        textSize = 15f
-        singleLine = type == "phone" ||
-            hintText.contains("السنة") ||
-            hintText.contains("العداد")
-
-        if (type == "phone") {
-            inputType = InputType.TYPE_CLASS_PHONE
+    private fun field(hintText: String, type: String = "text"): EditText =
+        EditText(this).apply {
+            hint = hintText
+            textSize = 15f
+            singleLine = type == "phone" || hintText.contains("السنة") || hintText.contains("العداد")
+            if (type == "phone") inputType = InputType.TYPE_CLASS_PHONE
+            if (type == "password") {
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            setPadding(12, 8, 12, 8)
         }
 
-        if (type == "password") {
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-
-        setPadding(12, 8, 12, 8)
-    }
-
-    private fun formDialog(
-        title: String,
-        views: List<android.view.View>,
-        save: () -> Unit
-    ) {
+    private fun formDialog(title: String, views: List<android.view.View>, save: () -> Unit) {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(20, 5, 20, 5)
@@ -465,11 +372,7 @@ class MainActivity : Activity() {
         }
 
         val scroller = ScrollView(this)
-
-        views.forEach { view ->
-            box.addView(view, matchWidth())
-        }
-
+        views.forEach { view -> box.addView(view, matchWidth()) }
         scroller.addView(box)
 
         val dialog = AlertDialog.Builder(this)
@@ -480,10 +383,8 @@ class MainActivity : Activity() {
             .create()
 
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-                .setOnClickListener { save() }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { save() }
         }
-
         dialog.show()
     }
 
