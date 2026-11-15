@@ -49,6 +49,7 @@ jobs:
 
           p.write_text(source.replace(old, new), encoding="utf-8")
           print("MainActivity.kt compatibility fix applied successfully")
+
           PY
 
           cat > build.gradle.kts <<'EOF'
@@ -87,6 +88,41 @@ jobs:
           }
           EOF
 
+      - name: Install branding resources
+        run: |
+          test -f workshop_branding_package.zip
+          unzip -o workshop_branding_package.zip -d .
+
+          test -f app/src/main/res/mipmap-mdpi/ic_launcher.png
+          test -f app/src/main/res/drawable/ic_launcher_foreground.png
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("app/src/main/AndroidManifest.xml")
+          s = p.read_text(encoding="utf-8")
+
+          if "android:icon=" not in s:
+              s = re.sub(
+                  r"<application\b",
+                  '<application\n        android:icon="@mipmap/ic_launcher"',
+                  s,
+                  count=1
+              )
+
+          if "android:roundIcon=" not in s:
+              s = re.sub(
+                  r"<application\b",
+                  '<application\n        android:roundIcon="@mipmap/ic_launcher"',
+                  s,
+                  count=1
+              )
+
+          p.write_text(s, encoding="utf-8")
+          print("Branding resources and app icon installed successfully")
+          PY
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
@@ -110,6 +146,8 @@ jobs:
           test -f app/src/main/java/com/khubara/workshop/MainActivity.kt
           test -f app/src/main/java/com/khubara/workshop/WorkshopDb.kt
           test -f app/src/main/res/values/styles.xml
+          test -f app/src/main/res/mipmap-mdpi/ic_launcher.png
+          test -f app/src/main/res/drawable/ic_launcher_foreground.png
 
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
