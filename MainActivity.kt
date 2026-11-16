@@ -197,21 +197,7 @@ class MainActivity : Activity() {
         }
         root.addView(offlineNote)
 
-        addSectionTitle("ملخص الورشة")
-
-        val statsRow1 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        statsRow1.addView(statCard("العملاء", db.count("customers"), "👥"), weightedParams())
-        statsRow1.addView(statCard("السيارات", db.count("vehicles"), "🚘"), weightedParams())
-        root.addView(statsRow1)
-
-        val statsRow2 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        statsRow2.addView(statCard("أوامر الإصلاح", db.count("work_orders"), "🔧"), weightedParams())
-        statsRow2.addView(statCard("قطع المخزون", db.count("parts"), "📦"), weightedParams())
-        root.addView(statsRow2)
+        // إدارة الورشة تظهر أولاً
 
         addSectionTitle("إدارة الورشة")
 
@@ -229,6 +215,36 @@ class MainActivity : Activity() {
             { partForm() }
         )
 
+        // ملخص الورشة يظهر أسفل الإدارة
+
+        addSectionTitle("ملخص الورشة")
+
+        val statsRow1 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        statsRow1.addView(
+            statCard("العملاء", db.count("customers"), "👥", "customers"),
+            weightedParams()
+        )
+        statsRow1.addView(
+            statCard("السيارات", db.count("vehicles"), "🚘", "vehicles"),
+            weightedParams()
+        )
+        root.addView(statsRow1)
+
+        val statsRow2 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        statsRow2.addView(
+            statCard("أوامر الإصلاح", db.count("work_orders"), "🔧", "work_orders"),
+            weightedParams()
+        )
+        statsRow2.addView(
+            statCard("قطع المخزون", db.count("parts"), "📦", "parts"),
+            weightedParams()
+        )
+        root.addView(statsRow2)
+
         addSectionTitle("السجلات والحساب")
 
         addAction("عرض السجلات", navy) {
@@ -240,7 +256,7 @@ class MainActivity : Activity() {
         }
 
         val footer = TextView(this).apply {
-            text = "خبراء هونداي وفورد  •  الإصدار التأسيسي"
+            text = "خبراء هونداي وفورد  •  الإصدار 0.2.0"
             textSize = 12f
             setTextColor(mutedColor)
             gravity = Gravity.CENTER
@@ -261,8 +277,20 @@ class MainActivity : Activity() {
         root.addView(view, matchWidth())
     }
 
-    private fun statCard(label: String, count: Int, symbol: String): View {
+    // بطاقة إحصائية قابلة للنقر وتفتح سجلات القسم
+
+    private fun statCard(
+        label: String,
+        count: Int,
+        symbol: String,
+        table: String
+    ): View {
         val card = LinearLayout(this).apply {
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                showRecords(label, table)
+            }
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(8), dp(15), dp(8), dp(15))
@@ -503,21 +531,27 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this)
             .setTitle("سجلات الورشة")
             .setItems(labels) { _, which ->
-                val rows = db.recentRows(tables[which])
-
-                val message = if (rows.isEmpty()) {
-                    "لا توجد سجلات بعد"
-                } else {
-                    rows.joinToString("\n\n────────────\n\n")
-                }
-
-                AlertDialog.Builder(this)
-                    .setTitle(labels[which])
-                    .setMessage(message)
-                    .setPositiveButton("إغلاق", null)
-                    .show()
+                showRecords(labels[which], tables[which])
             }
             .setNegativeButton("إغلاق", null)
+            .show()
+    }
+
+    // دالة مشتركة لعرض سجلات كل قسم
+
+    private fun showRecords(label: String, table: String) {
+        val rows = db.recentRows(table)
+
+        val message = if (rows.isEmpty()) {
+            "لا توجد سجلات بعد"
+        } else {
+            rows.joinToString("\n\n────────────\n\n")
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(label)
+            .setMessage(message)
+            .setPositiveButton("إغلاق", null)
             .show()
     }
 
