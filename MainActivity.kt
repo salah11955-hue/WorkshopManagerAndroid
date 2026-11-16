@@ -11,6 +11,8 @@ import android.graphics.Typeface
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType
+import android.text.TextWatcher
+import android.text.Editable
 import android.widget.*
 
 class MainActivity : Activity() {
@@ -197,8 +199,6 @@ class MainActivity : Activity() {
         }
         root.addView(offlineNote)
 
-        // إدارة الورشة تظهر أولاً
-
         addSectionTitle("إدارة الورشة")
 
         addTileRow(
@@ -214,8 +214,6 @@ class MainActivity : Activity() {
             { workOrderForm() },
             { partForm() }
         )
-
-        // ملخص الورشة يظهر أسفل الإدارة
 
         addSectionTitle("ملخص الورشة")
 
@@ -256,7 +254,7 @@ class MainActivity : Activity() {
         }
 
         val footer = TextView(this).apply {
-            text = "خبراء هونداي وفورد  •  الإصدار 0.2.0"
+            text = "خبراء هونداي وفورد  •  الإصدار 0.3.0"
             textSize = 12f
             setTextColor(mutedColor)
             gravity = Gravity.CENTER
@@ -380,11 +378,15 @@ class MainActivity : Activity() {
         return tile
     }
 
-    // نماذج إدخال البيانات
+    // نماذج إدخال البيانات مع الاقتراحات التلقائية
 
     private fun customerForm() {
-        val name = field("اسم العميل")
-        val phone = field("رقم الهاتف الأساسي (إلزامي)", "phone")
+        val name = field("اسم العميل", suggestionKey = "customer_name")
+        val phone = field(
+            "رقم الهاتف الأساسي (إلزامي)",
+            "phone",
+            "customer_phone"
+        )
         val alt = field("أرقام بديلة، افصل بينها بفاصلة")
         val address = field("العنوان")
 
@@ -423,8 +425,11 @@ class MainActivity : Activity() {
         val model = field("الموديل")
         val year = field("سنة الصنع")
         val engine = field("المحرك")
-        val plate = field("رقم اللوحة")
-        val vin = field("رقم الهيكل VIN (إلزامي)")
+        val plate = field("رقم اللوحة", suggestionKey = "plate")
+        val vin = field(
+            "رقم الهيكل VIN (إلزامي)",
+            suggestionKey = "vin"
+        )
         val odo = field("عداد الكيلومترات الحالي")
 
         formDialog(
@@ -491,8 +496,8 @@ class MainActivity : Activity() {
     }
 
     private fun partForm() {
-        val number = field("رقم القطعة")
-        val name = field("اسم القطعة (إلزامي)")
+        val number = field("رقم القطعة", suggestionKey = "part_number")
+        val name = field("اسم القطعة (إلزامي)", suggestionKey = "part_name")
         val qty = field("الكمية")
         val unit = field("الوحدة، مثال قطعة")
         val buy = field("سعر الشراء")
@@ -612,24 +617,84 @@ class MainActivity : Activity() {
         showDashboard()
     }
 
-    // عناصر مساعدة
+    // حقل إدخال يدعم الاقتراحات المحلية عند الحاجة
 
-    private fun field(hintText: String, type: String = "text"): EditText =
-        EditText(this).apply {
+    private fun field(
+        hintText: String,
+        type: String = "text",
+        suggestionKey: String? = null
+    ): AutoCompleteTextView {
+
+        val input = AutoCompleteTextView(this).apply {
             hint = hintText
             textSize = 15f
-            singleLine = type == "phone" || hintText.contains("السنة") || hintText.contains("العداد")
+            singleLine = type == "phone" ||
+                hintText.contains("السنة") ||
+                hintText.contains("العداد")
 
             if (type == "phone") {
                 inputType = InputType.TYPE_CLASS_PHONE
             }
 
             if (type == "password") {
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                inputType = InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD
             }
 
             setPadding(dp(12), dp(8), dp(12), dp(8))
+            threshold = 1
         }
+
+        if (suggestionKey != null) {
+            val adapter = ArrayAdapter<String>(
+                this,
+                android.R.layout.simple_dropdown_item_1line,
+                mutableListOf()
+            )
+
+            input.setAdapter(adapter)
+
+            input.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(
+                    s: CharSequence?,
+                    start: Int,
+                    count: Int,
+                    after: Int
+                ) {}
+
+                override fun onTextChanged(
+                    s: CharSequence?,
+                    start: Int,
+                    before: Int,
+                    count: Int
+                ) {
+                    val prefix = s?.toString().orEmpty()
+
+                    if (prefix.isBlank()) {
+                        adapter.clear()
+                        input.dismissDropDown()
+                        return
+                    }
+
+                    val results = db.suggestions(suggestionKey, prefix)
+
+                    adapter.clear()
+                    adapter.addAll(results)
+                    adapter.notifyDataSetChanged()
+
+                    if (results.isNotEmpty() && input.hasFocus()) {
+                        input.showDropDown()
+                    } else {
+                        input.dismissDropDown()
+                    }
+                }
+
+                override fun afterTextChanged(s: Editable?) {}
+            })
+        }
+
+        return input
+    }
 
     private fun addAction(label: String, color: Int, action: () -> Unit) {
         val button = Button(this).apply {
