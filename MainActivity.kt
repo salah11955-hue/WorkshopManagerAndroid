@@ -378,7 +378,17 @@ class MainActivity : Activity() {
         return tile
     }
 
-    // نماذج إدخال البيانات مع الاقتراحات التلقائية
+    // رسالة توضيح السجل المكرر
+
+    private fun duplicateWarning(title: String, message: String) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("حسناً", null)
+            .show()
+    }
+
+    // نماذج إدخال البيانات مع فحص التكرار
 
     private fun customerForm() {
         val name = field("اسم العميل", suggestionKey = "customer_name")
@@ -391,8 +401,18 @@ class MainActivity : Activity() {
         val address = field("العنوان")
 
         formDialog("عميل جديد", listOf(name, phone, alt, address)) { dialog ->
+
             if (name.text.isBlank() || phone.text.isBlank()) {
                 return@formDialog toast("أدخل الاسم ورقم الهاتف")
+            }
+
+            val existing = db.findCustomerByPhone(phone.text.toString())
+
+            if (existing != null) {
+                return@formDialog duplicateWarning(
+                    "العميل مسجل مسبقاً",
+                    "رقم الهاتف الذي أدخلته مسجل باسم:\n\n$existing\n\nراجع سجل العميل قبل إضافة سجل جديد."
+                )
             }
 
             try {
@@ -404,7 +424,10 @@ class MainActivity : Activity() {
                 )
                 done(dialog)
             } catch (_: Exception) {
-                toast("رقم الهاتف مسجل مسبقاً أو توجد بيانات غير صحيحة")
+                duplicateWarning(
+                    "تعذر الحفظ",
+                    "تعذر إضافة العميل. تحقق من رقم الهاتف والبيانات المدخلة."
+                )
             }
         }
     }
@@ -436,8 +459,27 @@ class MainActivity : Activity() {
             "إضافة سيارة",
             listOf(owner, make, model, year, engine, plate, vin, odo)
         ) { dialog ->
+
             if (vin.text.isBlank()) {
                 return@formDialog toast("رقم الهيكل مطلوب")
+            }
+
+            val existingVin = db.findVehicleByVin(vin.text.toString())
+
+            if (existingVin != null) {
+                return@formDialog duplicateWarning(
+                    "السيارة مسجلة مسبقاً",
+                    "رقم الهيكل هذا موجود في سجل سيارة سابقة:\n\n$existingVin\n\nلا حاجة لإضافة السيارة مرة أخرى."
+                )
+            }
+
+            val existingPlate = db.findVehicleByPlate(plate.text.toString())
+
+            if (existingPlate != null) {
+                return@formDialog duplicateWarning(
+                    "رقم اللوحة مسجل مسبقاً",
+                    "هذه اللوحة مرتبطة بالسيارة التالية:\n\n$existingPlate\n\nراجع السجل قبل المتابعة."
+                )
             }
 
             try {
@@ -453,7 +495,10 @@ class MainActivity : Activity() {
                 )
                 done(dialog)
             } catch (_: Exception) {
-                toast("رقم الهيكل مسجل مسبقاً، راجع ملف المالك الحالي")
+                duplicateWarning(
+                    "تعذر حفظ السيارة",
+                    "تعذر إضافة السيارة. تحقق من رقم الهيكل ورقم اللوحة."
+                )
             }
         }
     }
@@ -507,8 +552,20 @@ class MainActivity : Activity() {
             "إضافة قطعة للمخزون",
             listOf(number, name, qty, unit, buy, sell)
         ) { dialog ->
+
             if (name.text.isBlank()) {
                 return@formDialog toast("اسم القطعة مطلوب")
+            }
+
+            if (number.text.isNotBlank()) {
+                val existingPart = db.findPartByNumber(number.text.toString())
+
+                if (existingPart != null) {
+                    return@formDialog duplicateWarning(
+                        "رقم القطعة موجود مسبقاً",
+                        "رقم القطعة الذي أدخلته مسجل باسم:\n\n$existingPart\n\nراجع سجل المخزون قبل إضافة قطعة أخرى."
+                    )
+                }
             }
 
             try {
@@ -522,7 +579,10 @@ class MainActivity : Activity() {
                 )
                 done(dialog)
             } catch (_: Exception) {
-                toast("تعذر حفظ القطعة")
+                duplicateWarning(
+                    "تعذر الحفظ",
+                    "تعذر إضافة القطعة. تحقق من البيانات المدخلة."
+                )
             }
         }
     }
@@ -541,8 +601,6 @@ class MainActivity : Activity() {
             .setNegativeButton("إغلاق", null)
             .show()
     }
-
-    // دالة مشتركة لعرض سجلات كل قسم
 
     private fun showRecords(label: String, table: String) {
         val rows = db.recentRows(table)
@@ -603,8 +661,7 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
-    // تغلق النافذة بعد نجاح الحفظ فقط.
-    // عند فشل التحقق أو الحفظ تبقى النافذة مفتوحة.
+    // تغلق النافذة بعد نجاح الحفظ فقط
 
     private fun done(dialog: AlertDialog) {
         dialog.dismiss()
@@ -617,7 +674,7 @@ class MainActivity : Activity() {
         showDashboard()
     }
 
-    // حقل إدخال يدعم الاقتراحات المحلية عند الحاجة
+    // حقل إدخال يدعم الاقتراحات التلقائية
 
     private fun field(
         hintText: String,
@@ -628,11 +685,12 @@ class MainActivity : Activity() {
         val input = AutoCompleteTextView(this).apply {
             hint = hintText
             textSize = 15f
+
             setSingleLine(
-    type == "phone" ||
-    hintText.contains("السنة") ||
-    hintText.contains("العداد")
-)
+                type == "phone" ||
+                hintText.contains("السنة") ||
+                hintText.contains("العداد")
+            )
 
             if (type == "phone") {
                 inputType = InputType.TYPE_CLASS_PHONE
