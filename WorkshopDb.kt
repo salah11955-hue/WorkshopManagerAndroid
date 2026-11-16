@@ -308,7 +308,65 @@ class WorkshopDb(context: Context) :
         }
         return out
     }
+// ---------- فحص السجلات المكررة قبل الحفظ ----------
 
+fun findCustomerByPhone(phone: String): String? {
+    val clean = normalizePhone(phone)
+    if (clean.isBlank()) return null
+
+    readableDatabase.rawQuery(
+        "SELECT name FROM customers WHERE phone=? LIMIT 1",
+        arrayOf(clean)
+    ).use { c ->
+        return if (c.moveToFirst()) c.getString(0) else null
+    }
+}
+
+fun findVehicleByVin(vin: String): String? {
+    val clean = normalizeVin(vin)
+    if (clean.isBlank()) return null
+
+    readableDatabase.rawQuery(
+        """SELECT make, model, plate
+           FROM vehicles WHERE vin=? LIMIT 1""",
+        arrayOf(clean)
+    ).use { c ->
+        return if (c.moveToFirst()) {
+            "${c.getString(0)} ${c.getString(1)} — اللوحة: ${c.getString(2)}"
+        } else null
+    }
+}
+
+fun findVehicleByPlate(plate: String): String? {
+    val clean = plate.trim()
+    if (clean.isBlank()) return null
+
+    readableDatabase.rawQuery(
+        """SELECT make, model, vin
+           FROM vehicles
+           WHERE TRIM(plate)=? COLLATE NOCASE
+           LIMIT 1""",
+        arrayOf(clean)
+    ).use { c ->
+        return if (c.moveToFirst()) {
+            "${c.getString(0)} ${c.getString(1)} — VIN: ${c.getString(2)}"
+        } else null
+    }
+}
+
+fun findPartByNumber(number: String): String? {
+    val clean = number.trim()
+    if (clean.isBlank()) return null
+
+    readableDatabase.rawQuery(
+        """SELECT name FROM parts
+           WHERE TRIM(part_number)=? COLLATE NOCASE
+           LIMIT 1""",
+        arrayOf(clean)
+    ).use { c ->
+        return if (c.moveToFirst()) c.getString(0) else null
+    }
+}
     // ---------- الاقتراحات التلقائية أثناء الكتابة ----------
 
     fun suggestions(key: String, prefix: String): List<String> {
