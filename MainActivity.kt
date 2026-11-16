@@ -628,9 +628,11 @@ class MainActivity : Activity() {
         val input = AutoCompleteTextView(this).apply {
             hint = hintText
             textSize = 15f
-            singleLine = type == "phone" ||
-                hintText.contains("السنة") ||
-                hintText.contains("العداد")
+            setSingleLine(
+    type == "phone" ||
+    hintText.contains("السنة") ||
+    hintText.contains("العداد")
+)
 
             if (type == "phone") {
                 inputType = InputType.TYPE_CLASS_PHONE
