@@ -1,3 +1,4 @@
+
 package com.khubara.workshop
 
 import android.content.ContentValues
@@ -306,6 +307,60 @@ class WorkshopDb(context: Context) :
             }
         }
         return out
+    }
+
+    // ---------- الاقتراحات التلقائية أثناء الكتابة ----------
+
+    fun suggestions(key: String, prefix: String): List<String> {
+        val cleanPrefix = when (key) {
+            "phone", "customer_phone" -> normalizePhone(prefix)
+            "vin" -> normalizeVin(prefix)
+            else -> prefix.trim()
+        }
+
+        if (cleanPrefix.isBlank()) return emptyList()
+
+        val column = when (key) {
+            "customer", "customer_name", "name" -> "customers.name"
+            "phone", "customer_phone" -> "customers.phone"
+            "plate" -> "vehicles.plate"
+            "vin" -> "vehicles.vin"
+            "part_number" -> "parts.part_number"
+            "part_name" -> "parts.name"
+            else -> return emptyList()
+        }
+
+        val table = when (key) {
+            "customer", "customer_name", "name", "phone", "customer_phone" -> "customers"
+            "plate", "vin" -> "vehicles"
+            "part_number", "part_name" -> "parts"
+            else -> return emptyList()
+        }
+
+        val sql = """
+            SELECT DISTINCT $column
+            FROM $table
+            WHERE $column LIKE ? COLLATE NOCASE
+              AND TRIM($column) != ''
+            ORDER BY $column
+            LIMIT 10
+        """.trimIndent()
+
+        val results = mutableListOf<String>()
+
+        readableDatabase.rawQuery(
+            sql,
+            arrayOf("$cleanPrefix%")
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val value = cursor.getString(0)
+                if (!value.isNullOrBlank()) {
+                    results.add(value)
+                }
+            }
+        }
+
+        return results
     }
 
     companion object {
