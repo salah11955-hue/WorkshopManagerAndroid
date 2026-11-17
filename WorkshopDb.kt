@@ -48,7 +48,10 @@ data class WorkOrderHistoryRecord(
 
 class WorkshopDb(context: Context) :
     SQLiteOpenHelper(context, "workshop.db", null, 3) {
-
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        db.setForeignKeyConstraintsEnabled(true)
+    }
     override fun onCreate(db: SQLiteDatabase) {
         createBusinessTables(db)
         createUsersTable(db)
