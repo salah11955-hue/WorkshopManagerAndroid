@@ -637,43 +637,52 @@ class MainActivity : Activity() {
             .setNegativeButton("إغلاق", null)
             .create()
 
-        fun refreshResults() {
-            resultsBox.removeAllViews()
+        
+fun refreshResults() {
+    resultsBox.removeAllViews()
 
-            val text = query.text.toString()
-            if (text.isBlank()) return
+    val searchText = query.text.toString()
+    if (searchText.isBlank()) return
 
-            val results = db.searchVehicles(text)
+    val results = db.searchVehicles(searchText)
 
-            if (results.isEmpty()) {
-                val empty = TextView(this).apply {
-                    text = "لا توجد سيارات مطابقة للبحث"
-                    textSize = 14f
-                    setTextColor(mutedColor)
-                    gravity = Gravity.CENTER
-                    setPadding(dp(10), dp(18), dp(10), dp(18))
-                }
-                resultsBox.addView(empty)
-                return
+    if (results.isEmpty()) {
+        val empty = TextView(this).apply {
+            text = "لا توجد سيارات مطابقة للبحث"
+            textSize = 14f
+            setTextColor(mutedColor)
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(18), dp(10), dp(18))
+        }
+        resultsBox.addView(empty)
+        return
+    }
+
+    results.forEach { vehicle ->
+        val item = TextView(this).apply {
+            text = "${vehicle.make} ${vehicle.model} ${vehicle.year}\n" +
+                "اللوحة: ${vehicle.plate.ifBlank { "غير مسجلة" }}\n" +
+                "VIN: ${vehicle.vin}\n" +
+                "المالك: ${vehicle.ownerName}"
+            textSize = 14f
+            setTextColor(navy)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = roundedBackground(Color.WHITE, 12)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                dialog.dismiss()
+                showVehicleProfile(vehicle.id)
             }
+        }
 
-            results.forEach { vehicle ->
-                val item = TextView(this).apply {
-                    text = "${vehicle.make} ${vehicle.model} ${vehicle.year}\n" +
-                        "اللوحة: ${vehicle.plate.ifBlank { "غير مسجلة" }}\n" +
-                        "VIN: ${vehicle.vin}\n" +
-                        "المالك: ${vehicle.ownerName}"
-                    textSize = 14f
-                    setTextColor(navy)
-                    setPadding(dp(12), dp(12), dp(12), dp(12))
-                    background = roundedBackground(Color.WHITE, 12)
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener {
-                        dialog.dismiss()
-                        showVehicleProfile(vehicle.id)
-                    }
-                }
+        val params = matchWidth().apply {
+            setMargins(0, dp(5), 0, dp(5))
+        }
+        resultsBox.addView(item, params)
+    }
+}
+
 
                 val params = matchWidth().apply {
                     setMargins(0, dp(5), 0, dp(5))
