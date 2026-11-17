@@ -525,42 +525,66 @@ class MainActivity : Activity() {
 
     // أوامر الإصلاح العامة
 
-    private fun workOrderForm() {
-        val vehicles = db.vehicleOptions()
-        if (vehicles.isEmpty()) return toast("سجّل سيارة أولاً")
+    
+private fun workOrderForm() {
+    val vehicles = db.vehicleOptions()
+    if (vehicles.isEmpty()) return toast("سجّل سيارة أولاً")
 
-        val vehicle = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                vehicles.map { it.third }
+    val vehicle = Spinner(this).apply {
+        adapter = ArrayAdapter(
+            this@MainActivity,
+            android.R.layout.simple_spinner_dropdown_item,
+            vehicles.map { it.third }
+        )
+    }
+
+    val odo = field("قراءة العداد عند الزيارة", type = "number")
+    val complaint = field("شكوى العميل")
+    val diagnosis = field("التشخيص الفني الأولي")
+    val repair = field("تفاصيل الإصلاح المنفذ")
+
+    val statuses = arrayOf("مفتوح", "قيد العمل", "مكتمل")
+
+    val status = Spinner(this).apply {
+        adapter = ArrayAdapter(
+            this@MainActivity,
+            android.R.layout.simple_spinner_dropdown_item,
+            statuses
+        )
+    }
+
+    val labor = field("أجور العمل", type = "decimal")
+    val parts = field("تكلفة قطع الغيار", type = "decimal")
+
+    formDialog(
+        "أمر إصلاح جديد",
+        listOf(
+            vehicle, odo, complaint, diagnosis,
+            repair, status, labor, parts
+        )
+    ) { dialog ->
+        try {
+            val selected = vehicles[vehicle.selectedItemPosition]
+
+            db.addWorkOrder(
+                selected.second,
+                selected.first,
+                odo.text.toString(),
+                complaint.text.toString(),
+                diagnosis.text.toString(),
+                repair.text.toString(),
+                status.selectedItem.toString(),
+                labor.text.toString(),
+                parts.text.toString()
             )
-        }
 
-        val odo = field("قراءة العداد عند الزيارة")
-        val complaint = field("شكوى العميل")
-        val diagnosis = field("التشخيص الفني الأولي")
-
-        formDialog(
-            "أمر إصلاح جديد",
-            listOf(vehicle, odo, complaint, diagnosis)
-        ) { dialog ->
-            try {
-                val selected = vehicles[vehicle.selectedItemPosition]
-
-                db.addWorkOrder(
-                    selected.second,
-                    selected.first,
-                    odo.text.toString(),
-                    complaint.text.toString(),
-                    diagnosis.text.toString()
-                )
-                done(dialog)
-            } catch (_: Exception) {
-                toast("تعذر حفظ أمر الإصلاح")
-            }
+            done(dialog)
+        } catch (_: Exception) {
+            toast("تعذر الحفظ، تحقق من قراءة العداد والتكاليف")
         }
     }
+}
+
 
     // إضافة قطعة
 
@@ -893,37 +917,57 @@ fun refreshResults() {
 
     // تسجيل زيارة من ملف السيارة مباشرة
 
-    private fun newVehicleVisit(vehicleId: Long) {
-        val vehicle = db.getVehicleProfile(vehicleId) ?: return
+    
+private fun newVehicleVisit(vehicleId: Long) {
+    val vehicle = db.getVehicleProfile(vehicleId) ?: return
 
-        val odo = field("قراءة العداد عند الزيارة")
-        odo.setText(vehicle.odometer.toString())
+    val odo = field("قراءة العداد عند الزيارة", type = "number")
+    odo.setText(vehicle.odometer.toString())
 
-        val complaint = field("شكوى العميل")
-        val diagnosis = field("التشخيص الفني الأولي")
+    val complaint = field("شكوى العميل")
+    val diagnosis = field("التشخيص الفني الأولي")
+    val repair = field("تفاصيل الإصلاح المنفذ")
 
-        formDialog(
-            "زيارة جديدة — ${vehicle.make} ${vehicle.model}",
-            listOf(odo, complaint, diagnosis)
-        ) { dialog ->
-            try {
-                db.addWorkOrder(
-                    vehicle.customerId,
-                    vehicle.id,
-                    odo.text.toString(),
-                    complaint.text.toString(),
-                    diagnosis.text.toString()
-                )
+    val statuses = arrayOf("مفتوح", "قيد العمل", "مكتمل")
 
-                dialog.dismiss()
-                activeFormDialog = null
-                toast("تم تسجيل الزيارة بنجاح")
-                showVehicleProfile(vehicle.id)
-            } catch (_: Exception) {
-                toast("تعذر حفظ الزيارة")
-            }
+    val status = Spinner(this).apply {
+        adapter = ArrayAdapter(
+            this@MainActivity,
+            android.R.layout.simple_spinner_dropdown_item,
+            statuses
+        )
+    }
+
+    val labor = field("أجور العمل", type = "decimal")
+    val parts = field("تكلفة قطع الغيار", type = "decimal")
+
+    formDialog(
+        "زيارة جديدة — ${vehicle.make} ${vehicle.model}",
+        listOf(odo, complaint, diagnosis, repair, status, labor, parts)
+    ) { dialog ->
+        try {
+            db.addWorkOrder(
+                vehicle.customerId,
+                vehicle.id,
+                odo.text.toString(),
+                complaint.text.toString(),
+                diagnosis.text.toString(),
+                repair.text.toString(),
+                status.selectedItem.toString(),
+                labor.text.toString(),
+                parts.text.toString()
+            )
+
+            dialog.dismiss()
+            activeFormDialog = null
+            toast("تم تسجيل الزيارة بنجاح")
+            showVehicleProfile(vehicle.id)
+        } catch (_: Exception) {
+            toast("تعذر الحفظ، تحقق من قراءة العداد والتكاليف")
         }
     }
+}
+
 
     // نقل الملكية مع حفظ المالك السابق
 
@@ -1118,20 +1162,32 @@ fun refreshResults() {
             hint = hintText
             textSize = 15f
 
-            setSingleLine(
-                type == "phone" ||
-                    hintText.contains("السنة") ||
-                    hintText.contains("العداد")
-            )
+            
+setSingleLine(
+    type == "phone" ||
+        type == "number" ||
+        type == "decimal" ||
+        hintText.contains("السنة") ||
+        hintText.contains("العداد")
+)
 
-            if (type == "phone") {
-                inputType = InputType.TYPE_CLASS_PHONE
-            }
+if (type == "phone") {
+    inputType = InputType.TYPE_CLASS_PHONE
+}
 
-            if (type == "password") {
-                inputType = InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_PASSWORD
-            }
+if (type == "number") {
+    inputType = InputType.TYPE_CLASS_NUMBER
+}
+
+if (type == "decimal") {
+    inputType = InputType.TYPE_CLASS_NUMBER or
+        InputType.TYPE_NUMBER_FLAG_DECIMAL
+}
+
+if (type == "password") {
+    inputType = InputType.TYPE_CLASS_TEXT or
+        InputType.TYPE_TEXT_VARIATION_PASSWORD
+}
 
             setPadding(dp(12), dp(8), dp(12), dp(8))
             threshold = 1
