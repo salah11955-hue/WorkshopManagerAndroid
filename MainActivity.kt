@@ -684,13 +684,7 @@ fun refreshResults() {
 }
 
 
-                val params = matchWidth().apply {
-                    setMargins(0, dp(5), 0, dp(5))
-                }
-                resultsBox.addView(item, params)
-            }
-        }
-
+                
         query.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(
                 s: CharSequence?, start: Int, count: Int, after: Int
