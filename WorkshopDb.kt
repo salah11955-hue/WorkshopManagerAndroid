@@ -360,40 +360,71 @@ class WorkshopDb(context: Context) :
         )
     }
 
-    fun addWorkOrder(
-        customerId: Long,
-        vehicleId: Long,
-        odometer: String,
-        complaint: String,
-        diagnosis: String
-    ) {
-        val database = writableDatabase
-        val reading = odometer.toLongOrNull() ?: 0L
+    
+fun addWorkOrder(
+    customerId: Long,
+    vehicleId: Long,
+    odometer: String,
+    complaint: String,
+    diagnosis: String,
+    repairNotes: String = "",
+    status: String = "مفتوح",
+    laborCost: String = "0",
+    partsCost: String = "0"
+) {
+    val reading = odometer.toLongOrNull() ?: 0L
 
-        database.beginTransaction()
-        try {
-            val values = ContentValues().apply {
-                put("customer_id", customerId)
-                put("vehicle_id", vehicleId)
-                put("odometer_at_visit", reading)
-                put("complaint", complaint)
-                put("diagnosis", diagnosis)
-            }
+    val labor = laborCost.trim().ifBlank { "0" }.toDoubleOrNull()
+        ?: throw IllegalArgumentException("قيمة أجور العمل غير صحيحة")
 
-            database.insertOrThrow("work_orders", null, values)
+    val parts = partsCost.trim().ifBlank { "0" }.toDoubleOrNull()
+        ?: throw IllegalArgumentException("قيمة قطع الغيار غير صحيحة")
 
-            database.execSQL(
-                """UPDATE vehicles
-                   SET current_odometer=MAX(current_odometer, ?)
-                   WHERE id=?""",
-                arrayOf(reading, vehicleId)
-            )
-
-            database.setTransactionSuccessful()
-        } finally {
-            database.endTransaction()
-        }
+    require(labor.isFinite() && labor >= 0) {
+        "أجور العمل يجب أن تكون رقماً موجباً"
     }
+
+    require(parts.isFinite() && parts >= 0) {
+        "تكلفة القطع يجب أن تكون رقماً موجباً"
+    }
+
+    val cleanStatus = status.trim().ifBlank { "مفتوح" }
+
+    require(cleanStatus in setOf("مفتوح", "قيد العمل", "مكتمل")) {
+        "حالة أمر الإصلاح غير صحيحة"
+    }
+
+    val database = writableDatabase
+
+    database.beginTransaction()
+    try {
+        val values = ContentValues().apply {
+            put("customer_id", customerId)
+            put("vehicle_id", vehicleId)
+            put("odometer_at_visit", reading)
+            put("complaint", complaint)
+            put("diagnosis", diagnosis)
+            put("repair_notes", repairNotes.trim())
+            put("status", cleanStatus)
+            put("labor_cost", labor)
+            put("parts_cost", parts)
+        }
+
+        database.insertOrThrow("work_orders", null, values)
+
+        database.execSQL(
+            """UPDATE vehicles
+               SET current_odometer=MAX(current_odometer, ?)
+               WHERE id=?""",
+            arrayOf(reading, vehicleId)
+        )
+
+        database.setTransactionSuccessful()
+    } finally {
+        database.endTransaction()
+    }
+}
+
 
     fun addPart(
         number: String,
