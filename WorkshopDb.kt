@@ -695,6 +695,48 @@ fun addWorkOrder(
 
     // ---------- السجلات العامة ----------
 
+data class ClickableRecord(
+    val id: Long,
+    val title: String,
+    val subtitle: String,
+    val vehicleId: Long = 0L
+)
+
+fun recentClickableRecords(table: String): List<ClickableRecord> {
+    val sql = when (table) {
+        "vehicles" ->
+            """
+            SELECT id, make || ' ' || model, 
+                   'VIN: ' || vin || ' — اللوحة: ' || plate
+            FROM vehicles ORDER BY id DESC LIMIT 50
+            """
+
+        "work_orders" ->
+            """
+            SELECT id, 'أمر إصلاح #' || id,
+                   complaint, vehicle_id
+            FROM work_orders ORDER BY id DESC LIMIT 50
+            """
+
+        else -> return emptyList()
+    }
+
+    val records = mutableListOf<ClickableRecord>()
+
+    readableDatabase.rawQuery(sql, null).use { c ->
+        while (c.moveToNext()) {
+            records += ClickableRecord(
+                id = c.getLong(0),
+                title = c.getString(1) ?: "",
+                subtitle = c.getString(2) ?: "",
+                vehicleId = if (table == "work_orders") c.getLong(3) else c.getLong(0)
+            )
+        }
+    }
+
+    return records
+}
+
     fun recentRows(table: String): List<String> {
         val sql = when (table) {
             "customers" ->
