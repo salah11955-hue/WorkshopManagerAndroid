@@ -504,29 +504,11 @@ fun addWorkOrder(
         return out
     }
 
+    
+    
     // ---------- تفاصيل ملف السيارة ----------
 
-    fun getVehicleProfile(vehicleId: Long): VehicleProfile? data class CustomerProfile(
-    val id: Long,
-    val name: String,
-    val phone: String,
-    val alternatePhones: String,
-    val address: String,
-    val notes: String
-)
-
-data class CustomerWorkOrderRecord(
-    val id: Long,
-    val vehicleId: Long,
-    val vehicleName: String,
-    val complaint: String,
-    val diagnosis: String,
-    val repairNotes: String,
-    val status: String,
-    val laborCost: Double,
-    val partsCost: Double,
-    val createdAt: String
-){
+    fun getVehicleProfile(vehicleId: Long): VehicleProfile? {
         val sql = """
             SELECT
                 v.id, v.customer_id, v.make, v.model,
@@ -561,6 +543,7 @@ data class CustomerWorkOrderRecord(
             )
         }
     }
+
 
     // ---------- سجل الملاك ----------
 
