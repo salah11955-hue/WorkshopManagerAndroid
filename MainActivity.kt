@@ -1078,7 +1078,9 @@ private fun newVehicleVisit(vehicleId: Long) {
             .show()
     }
 
-    private fun showRecords(label: String, table: String) {
+    
+fun showRecords(label: String, table: String) {
+    if (table != "vehicles" && table != "work_orders") {
         val rows = db.recentRows(table)
 
         val message = if (rows.isEmpty()) {
@@ -1092,7 +1094,88 @@ private fun newVehicleVisit(vehicleId: Long) {
             .setMessage(message)
             .setPositiveButton("إغلاق", null)
             .show()
+        return
     }
+
+    val records = db.recentClickableRecords(table)
+
+    if (records.isEmpty()) {
+        AlertDialog.Builder(this)
+            .setTitle(label)
+            .setMessage("لا توجد سجلات بعد")
+            .setPositiveButton("إغلاق", null)
+            .show()
+        return
+    }
+
+    val listView = ListView(this).apply {
+        layoutDirection = View.LAYOUT_DIRECTION_RTL
+        adapter = object : android.widget.BaseAdapter() {
+            override fun getCount() = records.size
+
+            override fun getItem(position: Int) = records[position]
+
+            override fun getItemId(position: Int) =
+                records[position].id
+
+            override fun getView(
+                position: Int,
+                convertView: View?,
+                parent: android.view.ViewGroup?
+            ): View {
+                val item = records[position]
+
+                val container = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(
+                        dp(16), dp(12),
+                        dp(16), dp(12)
+                    )
+                    layoutDirection = View.LAYOUT_DIRECTION_RTL
+                }
+
+                val titleView = TextView(this@MainActivity).apply {
+                    text = item.title
+                    textSize = 16f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                }
+
+                val subtitleView = TextView(this@MainActivity).apply {
+                    text = item.subtitle
+                    textSize = 13f
+                    setPadding(0, dp(5), 0, 0)
+                }
+
+                container.addView(titleView)
+                container.addView(subtitleView)
+
+                return container
+            }
+        }
+
+        setOnItemClickListener { _, _, position, _ ->
+            val item = records[position]
+            val vehicleId = if (table == "vehicles") {
+                item.id
+            } else {
+                item.vehicleId
+            }
+
+            if (vehicleId > 0L) {
+                showVehicleProfile(vehicleId)
+            } else {
+                toast("لم يتم العثور على السيارة المرتبطة بهذا الأمر")
+            }
+        }
+    }
+
+    AlertDialog.Builder(this)
+        .setTitle(label)
+        .setView(listView)
+        .setPositiveButton("إغلاق", null)
+        .show()
+}
+
 
     // نافذة الإدخال
 
