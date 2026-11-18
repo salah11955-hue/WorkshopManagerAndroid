@@ -506,7 +506,27 @@ fun addWorkOrder(
 
     // ---------- تفاصيل ملف السيارة ----------
 
-    fun getVehicleProfile(vehicleId: Long): VehicleProfile? {
+    fun getVehicleProfile(vehicleId: Long): VehicleProfile? data class CustomerProfile(
+    val id: Long,
+    val name: String,
+    val phone: String,
+    val alternatePhones: String,
+    val address: String,
+    val notes: String
+)
+
+data class CustomerWorkOrderRecord(
+    val id: Long,
+    val vehicleId: Long,
+    val vehicleName: String,
+    val complaint: String,
+    val diagnosis: String,
+    val repairNotes: String,
+    val status: String,
+    val laborCost: Double,
+    val partsCost: Double,
+    val createdAt: String
+){
         val sql = """
             SELECT
                 v.id, v.customer_id, v.make, v.model,
@@ -644,7 +664,122 @@ fun addWorkOrder(
             database.endTransaction()
         }
     }
+// ---------- ملف العميل ----------
 
+fun getCustomerProfile(customerId: Long): CustomerProfile? {
+    val sql = """
+        SELECT id, name, phone, alternate_phones, address, notes
+        FROM customers
+        WHERE id=?
+        LIMIT 1
+    """.trimIndent()
+
+    readableDatabase.rawQuery(
+        sql,
+        arrayOf(customerId.toString())
+    ).use { c ->
+        if (!c.moveToFirst()) return null
+
+        return CustomerProfile(
+            id = c.getLong(0),
+            name = c.getString(1) ?: "",
+            phone = c.getString(2) ?: "",
+            alternatePhones = c.getString(3) ?: "",
+            address = c.getString(4) ?: "",
+            notes = c.getString(5) ?: ""
+        )
+    }
+}
+
+// ---------- سيارات العميل ----------
+
+fun getCustomerVehicles(customerId: Long): List<VehicleProfile> {
+    val out = mutableListOf<VehicleProfile>()
+
+    val sql = """
+        SELECT
+            v.id, v.customer_id, v.make, v.model,
+            v.model_year, v.engine, v.plate, v.vin,
+            v.current_odometer, v.notes,
+            c.name, c.phone
+        FROM vehicles v
+        LEFT JOIN customers c ON c.id = v.customer_id
+        WHERE v.customer_id=?
+        ORDER BY v.id DESC
+    """.trimIndent()
+
+    readableDatabase.rawQuery(
+        sql,
+        arrayOf(customerId.toString())
+    ).use { c ->
+        while (c.moveToNext()) {
+            out += VehicleProfile(
+                id = c.getLong(0),
+                customerId = c.getLong(1),
+                make = c.getString(2) ?: "",
+                model = c.getString(3) ?: "",
+                year = if (c.isNull(4)) "" else c.getInt(4).toString(),
+                engine = c.getString(5) ?: "",
+                plate = c.getString(6) ?: "",
+                vin = c.getString(7) ?: "",
+                odometer = c.getLong(8),
+                notes = c.getString(9) ?: "",
+                ownerName = c.getString(10) ?: "",
+                ownerPhone = c.getString(11) ?: ""
+            )
+        }
+    }
+
+    return out
+}
+
+// ---------- سجل زيارات العميل ----------
+
+fun getCustomerWorkOrders(
+    customerId: Long
+): List<CustomerWorkOrderRecord> {
+    val out = mutableListOf<CustomerWorkOrderRecord>()
+
+    val sql = """
+        SELECT
+            w.id,
+            w.vehicle_id,
+            v.make || ' ' || v.model,
+            w.complaint,
+            w.diagnosis,
+            w.repair_notes,
+            w.status,
+            w.labor_cost,
+            w.parts_cost,
+            w.created_at
+        FROM work_orders w
+        LEFT JOIN vehicles v ON v.id = w.vehicle_id
+        WHERE w.customer_id=?
+        ORDER BY w.id DESC
+    """.trimIndent()
+
+    readableDatabase.rawQuery(
+        sql,
+        arrayOf(customerId.toString())
+    ).use { c ->
+        while (c.moveToNext()) {
+            out += CustomerWorkOrderRecord(
+                id = c.getLong(0),
+                vehicleId = c.getLong(1),
+                vehicleName = c.getString(2) ?: "",
+                complaint = c.getString(3) ?: "",
+                diagnosis = c.getString(4) ?: "",
+                repairNotes = c.getString(5) ?: "",
+                status = c.getString(6) ?: "",
+                laborCost = c.getDouble(7),
+                partsCost = c.getDouble(8),
+                createdAt = c.getString(9) ?: ""
+            )
+        }
+    }
+
+    return out
+}
     // ---------- سجل زيارات السيارة ----------
 
     fun getVehicleWorkOrders(
