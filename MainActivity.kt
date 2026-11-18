@@ -1079,8 +1079,12 @@ private fun newVehicleVisit(vehicleId: Long) {
     }
 
     
+
 fun showRecords(label: String, table: String) {
-    if (table != "vehicles" && table != "work_orders") {
+    if (table != "customers" &&
+        table != "vehicles" &&
+        table != "work_orders"
+    ) {
         val rows = db.recentRows(table)
 
         val message = if (rows.isEmpty()) {
@@ -1110,6 +1114,7 @@ fun showRecords(label: String, table: String) {
 
     val listView = ListView(this).apply {
         layoutDirection = View.LAYOUT_DIRECTION_RTL
+
         adapter = object : android.widget.BaseAdapter() {
             override fun getCount() = records.size
 
@@ -1155,6 +1160,12 @@ fun showRecords(label: String, table: String) {
 
         setOnItemClickListener { _, _, position, _ ->
             val item = records[position]
+
+            if (table == "customers") {
+                showCustomerProfile(item.id)
+                return@setOnItemClickListener
+            }
+
             val vehicleId = if (table == "vehicles") {
                 item.id
             } else {
@@ -1175,6 +1186,7 @@ fun showRecords(label: String, table: String) {
         .setPositiveButton("إغلاق", null)
         .show()
 }
+
 
 
     // نافذة الإدخال
