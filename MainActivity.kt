@@ -915,58 +915,136 @@ fun refreshResults() {
             .show()
     }
 
-    // تسجيل زيارة من ملف السيارة مباشرة
-
     
-private fun newVehicleVisit(vehicleId: Long) {
-    val vehicle = db.getVehicleProfile(vehicleId) ?: return
+// ---------- ملف العميل ----------
 
-    val odo = field("قراءة العداد عند الزيارة", type = "number")
-    odo.setText(vehicle.odometer.toString())
+private fun showCustomerProfile(customerId: Long) {
+    val customer = db.getCustomerProfile(customerId)
 
-    val complaint = field("شكوى العميل")
-    val diagnosis = field("التشخيص الفني الأولي")
-    val repair = field("تفاصيل الإصلاح المنفذ")
-
-    val statuses = arrayOf("مفتوح", "قيد العمل", "مكتمل")
-
-    val status = Spinner(this).apply {
-        adapter = ArrayAdapter(
-            this@MainActivity,
-            android.R.layout.simple_spinner_dropdown_item,
-            statuses
-        )
+    if (customer == null) {
+        toast("لم يتم العثور على العميل")
+        return
     }
 
-    val labor = field("أجور العمل", type = "decimal")
-    val parts = field("تكلفة قطع الغيار", type = "decimal")
+    val vehicles = db.getCustomerVehicles(customerId)
+    val visits = db.getCustomerWorkOrders(customerId)
 
-    formDialog(
-        "زيارة جديدة — ${vehicle.make} ${vehicle.model}",
-        listOf(odo, complaint, diagnosis, repair, status, labor, parts)
-    ) { dialog ->
-        try {
-            db.addWorkOrder(
-                vehicle.customerId,
-                vehicle.id,
-                odo.text.toString(),
-                complaint.text.toString(),
-                diagnosis.text.toString(),
-                repair.text.toString(),
-                status.selectedItem.toString(),
-                labor.text.toString(),
-                parts.text.toString()
+    val box = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(16), dp(8), dp(16), dp(8))
+        layoutDirection = View.LAYOUT_DIRECTION_RTL
+    }
+
+    val title = TextView(this).apply {
+        text = customer.name
+        textSize = 21f
+        setTextColor(navy)
+        setTypeface(null, Typeface.BOLD)
+        gravity = Gravity.CENTER
+        setPadding(dp(8), dp(12), dp(8), dp(12))
+    }
+    box.addView(title, matchWidth())
+
+    addInfo(box, "رقم الهاتف", customer.phone)
+    addInfo(box, "أرقام بديلة", customer.alternatePhones)
+    addInfo(box, "العنوان", customer.address)
+    addInfo(box, "ملاحظات", customer.notes)
+
+    fun addSection(text: String) {
+        val heading = TextView(this).apply {
+            this.text = text
+            textSize = 17f
+            setTextColor(navy)
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, dp(18), 0, dp(8))
+        }
+        box.addView(heading, matchWidth())
+    }
+
+    addSection("سيارات العميل (${vehicles.size})")
+
+    if (vehicles.isEmpty()) {
+        addInfo(box, "السيارات", "لا توجد سيارات مسجلة لهذا العميل")
+    } else {
+        vehicles.forEach { vehicle ->
+            val item = TextView(this).apply {
+                text = "${vehicle.make} ${vehicle.model} ${vehicle.year}\n" +
+                    "اللوحة: ${vehicle.plate.ifBlank { "غير مسجلة" }}\n" +
+                    "VIN: ${vehicle.vin}\n" +
+                    "اضغط لفتح ملف السيارة"
+                textSize = 14f
+                setTextColor(navy)
+                setPadding(dp(12), dp(14), dp(12), dp(14))
+                background = roundedBackground(Color.WHITE, 12)
+                isClickable = true
+                isFocusable = true
+
+                setOnClickListener {
+                    showVehicleProfile(vehicle.id)
+                }
+            }
+
+            box.addView(
+                item,
+                matchWidth().apply {
+                    setMargins(0, dp(4), 0, dp(4))
+                }
             )
-
-            dialog.dismiss()
-            activeFormDialog = null
-            toast("تم تسجيل الزيارة بنجاح")
-            showVehicleProfile(vehicle.id)
-        } catch (_: Exception) {
-            toast("تعذر الحفظ، تحقق من قراءة العداد والتكاليف")
         }
     }
+
+    addSection("سجل زيارات العميل (${visits.size})")
+
+    if (visits.isEmpty()) {
+        addInfo(box, "الزيارات", "لا توجد زيارات مسجلة لهذا العميل")
+    } else {
+        visits.forEach { visit ->
+            val item = TextView(this).apply {
+                text =
+                    "أمر إصلاح رقم: ${visit.id}\n" +
+                    "السيارة: ${visit.vehicleName}\n" +
+                    "التاريخ: ${visit.createdAt}\n" +
+                    "الشكوى: ${visit.complaint}\n" +
+                    "التشخيص: ${visit.diagnosis}\n" +
+                    "الإصلاح: ${visit.repairNotes}\n" +
+                    "الحالة: ${visit.status}\n" +
+                    "أجور العمل: ${visit.laborCost}\n" +
+                    "تكلفة القطع: ${visit.partsCost}\n\n" +
+                    "اضغط لفتح ملف السيارة"
+
+                textSize = 13f
+                setTextColor(navy)
+                setPadding(dp(12), dp(14), dp(12), dp(14))
+                background = roundedBackground(Color.WHITE, 12)
+                isClickable = true
+                isFocusable = true
+
+                setOnClickListener {
+                    if (visit.vehicleId > 0L) {
+                        showVehicleProfile(visit.vehicleId)
+                    }
+                }
+            }
+
+            box.addView(
+                item,
+                matchWidth().apply {
+                    setMargins(0, dp(4), 0, dp(4))
+                }
+            )
+        }
+    }
+
+    val scroll = ScrollView(this)
+    scroll.addView(box)
+
+    AlertDialog.Builder(this)
+        .setTitle("ملف العميل")
+        .setView(scroll)
+        .setPositiveButton("إغلاق", null)
+        .show()
 }
+
 
 
     // نقل الملكية مع حفظ المالك السابق
