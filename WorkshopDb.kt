@@ -25,7 +25,27 @@ data class VehicleProfile(
     val ownerName: String,
     val ownerPhone: String
 )
+data class CustomerProfile(
+    val id: Long,
+    val name: String,
+    val phone: String,
+    val alternatePhones: String,
+    val address: String,
+    val notes: String
+)
 
+data class CustomerWorkOrderRecord(
+    val id: Long,
+    val vehicleId: Long,
+    val vehicleName: String,
+    val complaint: String,
+    val diagnosis: String,
+    val repairNotes: String,
+    val status: String,
+    val laborCost: Double,
+    val partsCost: Double,
+    val createdAt: String
+)
 data class OwnerHistoryRecord(
     val oldOwner: String,
     val newOwner: String,
