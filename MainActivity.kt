@@ -1046,6 +1046,58 @@ private fun showCustomerProfile(customerId: Long) {
 }
 
 
+    // تسجيل زيارة من ملف السيارة مباشرة
+
+    private fun newVehicleVisit(vehicleId: Long) {
+        val vehicle = db.getVehicleProfile(vehicleId) ?: return
+
+        val odo = field("قراءة العداد عند الزيارة", type = "number")
+        odo.setText(vehicle.odometer.toString())
+
+        val complaint = field("شكوى العميل")
+        val diagnosis = field("التشخيص الفني الأولي")
+        val repair = field("تفاصيل الإصلاح المنفذ")
+
+        val statuses = arrayOf("مفتوح", "قيد العمل", "مكتمل")
+
+        val status = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                statuses
+            )
+        }
+
+        val labor = field("أجور العمل", type = "decimal")
+        val parts = field("تكلفة قطع الغيار", type = "decimal")
+
+        formDialog(
+            "زيارة جديدة — ${vehicle.make} ${vehicle.model}",
+            listOf(odo, complaint, diagnosis, repair, status, labor, parts)
+        ) { dialog ->
+            try {
+                db.addWorkOrder(
+                    vehicle.customerId,
+                    vehicle.id,
+                    odo.text.toString(),
+                    complaint.text.toString(),
+                    diagnosis.text.toString(),
+                    repair.text.toString(),
+                    status.selectedItem.toString(),
+                    labor.text.toString(),
+                    parts.text.toString()
+                )
+
+                dialog.dismiss()
+                activeFormDialog = null
+                toast("تم تسجيل الزيارة بنجاح")
+                showVehicleProfile(vehicle.id)
+            } catch (_: Exception) {
+                toast("تعذر الحفظ، تحقق من قراءة العداد والتكاليف")
+            }
+        }
+    }
+
 
     // نقل الملكية مع حفظ المالك السابق
 
