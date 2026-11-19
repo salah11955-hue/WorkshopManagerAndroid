@@ -207,7 +207,9 @@ class MainActivity : Activity() {
         root.addView(offlineNote)
 
         addSectionTitle("إدارة الورشة")
-
+addAction("🚘  استقبال سيارة جديدة / مراجعة سجل سابق", gold) {
+    receptionSearchDialog()
+}
         addTileRow(
             "👤", "تسجيل عميل",
             "🚗", "إضافة سيارة",
