@@ -1170,9 +1170,8 @@ class WorkshopDb(context: Context) :
         }
 
         return out
-   
     }
-        // ---------- البحث في الاستقبال ----------
+       // ---------- البحث في الاستقبال ----------
 
     fun searchReception(
         query: String
@@ -2022,4 +2021,4 @@ class WorkshopDb(context: Context) :
         fun normalizeVin(raw: String): String =
             raw.uppercase().filter { it.isLetterOrDigit() }
     }
-}
+} 
