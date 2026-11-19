@@ -92,27 +92,27 @@ class MainActivity : Activity() {
     }
 
     private fun addAction(
-        label: String,
-        action: () -> Unit,
-        color: Int = blue
-    ) {
-        val button = Button(this).apply {
-            text = label
-            textSize = 15f
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = rounded(color)
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            setOnClickListener { action() }
-        }
-
-        root.addView(
-            button,
-            matchWidth().apply {
-                setMargins(0, dp(5), 0, dp(5))
-            }
-        )
+    label: String,
+    color: Int = blue,
+    action: () -> Unit
+) {
+    val button = Button(this).apply {
+        text = label
+        textSize = 15f
+        isAllCaps = false
+        setTextColor(Color.WHITE)
+        background = rounded(color)
+        setPadding(dp(10), dp(8), dp(10), dp(8))
+        setOnClickListener { action() }
     }
+
+    root.addView(
+        button,
+        matchWidth().apply {
+            setMargins(0, dp(5), 0, dp(5))
+        }
+    )
+}
 
     private fun rounded(color: Int) = GradientDrawable().apply {
         setColor(color)
