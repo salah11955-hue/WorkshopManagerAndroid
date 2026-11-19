@@ -532,6 +532,72 @@ fun addWorkOrder(
     }
 
     
+fun searchReception(query: String): List<ReceptionSearchResult> {
+    val clean = query.trim()
+    if (clean.isBlank()) return emptyList()
+
+    val results = mutableListOf<ReceptionSearchResult>()
+
+    // البحث عن العملاء برقم الهاتف
+    val phoneQuery = normalizePhone(clean)
+    if (phoneQuery.isNotBlank()) {
+        readableDatabase.rawQuery(
+            """
+            SELECT id, name, phone
+            FROM customers
+            WHERE phone LIKE ?
+            ORDER BY id DESC
+            LIMIT 20
+            """.trimIndent(),
+            arrayOf("%$phoneQuery%")
+        ).use { c ->
+            while (c.moveToNext()) {
+                results.add(
+                    ReceptionSearchResult(
+                        type = "customer",
+                        id = c.getLong(0),
+                        title = c.getString(1) ?: "",
+                        subtitle = "عميل — هاتف: ${c.getString(2) ?: ""}"
+                    )
+                )
+            }
+        }
+    }
+
+    // البحث عن السيارات برقم الهيكل أو اللوحة
+    val vinQuery = normalizeVin(clean)
+
+    readableDatabase.rawQuery(
+        """
+        SELECT id, make, model, vin, plate
+        FROM vehicles
+        WHERE vin LIKE ?
+           OR plate LIKE ? COLLATE NOCASE
+        ORDER BY id DESC
+        LIMIT 30
+        """.trimIndent(),
+        arrayOf("%$vinQuery%", "%$clean%")
+    ).use { c ->
+        while (c.moveToNext()) {
+            val make = c.getString(1) ?: ""
+            val model = c.getString(2) ?: ""
+            val vin = c.getString(3) ?: ""
+            val plate = c.getString(4) ?: ""
+
+            results.add(
+                ReceptionSearchResult(
+                    type = "vehicle",
+                    id = c.getLong(0),
+                    title = "$make $model".trim(),
+                    subtitle = "سيارة — اللوحة: $plate — VIN: $vin"
+                )
+            )
+        }
+    }
+
+    return results
+}
+
     
     // ---------- تفاصيل ملف السيارة ----------
 
