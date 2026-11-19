@@ -66,6 +66,13 @@ data class WorkOrderHistoryRecord(
     val createdAt: String
 )
 
+data class ReceptionSearchResult(
+    val type: String,
+    val id: Long,
+    val title: String,
+    val subtitle: String
+)
+
 class WorkshopDb(context: Context) :
     SQLiteOpenHelper(context, "workshop.db", null, 3) {
     override fun onConfigure(db: SQLiteDatabase) {
