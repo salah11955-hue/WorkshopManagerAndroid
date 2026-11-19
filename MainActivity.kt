@@ -90,11 +90,10 @@ class MainActivity : Activity() {
         }
         root.addView(view, matchWidth())
     }
-
-    private fun addAction(
+private fun addAction(
     label: String,
-    color: Int = blue,
-    action: () -> Unit
+    action: () -> Unit,
+    color: Int = blue
 ) {
     val button = Button(this).apply {
         text = label
