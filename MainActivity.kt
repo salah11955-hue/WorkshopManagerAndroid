@@ -637,6 +637,125 @@ private fun workOrderForm() {
         }
     }
 
+// ---------- استقبال السيارة والبحث الموحد ----------
+
+private fun receptionSearchDialog() {
+    val box = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(16), dp(8), dp(16), dp(8))
+        layoutDirection = View.LAYOUT_DIRECTION_RTL
+    }
+
+    val description = TextView(this).apply {
+        text = "ابحث عن العميل أو السيارة قبل تسجيل زيارة جديدة"
+        textSize = 14f
+        setTextColor(mutedColor)
+        setPadding(0, dp(5), 0, dp(10))
+    }
+    box.addView(description, matchWidth())
+
+    val query = field(
+        "رقم الهاتف أو رقم الهيكل VIN أو رقم اللوحة"
+    )
+    box.addView(query, matchWidth())
+
+    val resultsBox = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, dp(8), 0, 0)
+    }
+    box.addView(resultsBox, matchWidth())
+
+    val scroll = ScrollView(this).apply {
+        addView(box)
+    }
+
+    val dialog = AlertDialog.Builder(this)
+        .setTitle("استقبال سيارة")
+        .setView(scroll)
+        .setNegativeButton("إغلاق", null)
+        .create()
+
+    fun refreshResults() {
+        resultsBox.removeAllViews()
+
+        val searchText = query.text.toString().trim()
+        if (searchText.isBlank()) return
+
+        val results = db.searchReception(searchText)
+
+        if (results.isEmpty()) {
+            val empty = TextView(this).apply {
+                text = "لا توجد نتائج مطابقة.\nيمكننا تسجيل العميل أو السيارة إذا لم تكن مسجلة."
+                textSize = 14f
+                setTextColor(mutedColor)
+                gravity = Gravity.CENTER
+                setPadding(dp(10), dp(20), dp(10), dp(20))
+            }
+            resultsBox.addView(empty, matchWidth())
+            return
+        }
+
+        results.forEach { result ->
+
+            val isCustomer = result.type == "customer"
+
+            val item = TextView(this).apply {
+                text =
+                    (if (isCustomer) "👤 عميل: " else "🚗 سيارة: ") +
+                    result.title +
+                    "\n" + result.subtitle +
+                    "\nاضغط لفتح السجل"
+
+                textSize = 14f
+                setTextColor(navy)
+                setPadding(dp(14), dp(14), dp(14), dp(14))
+                background = roundedBackground(Color.WHITE, 12)
+                isClickable = true
+                isFocusable = true
+
+                setOnClickListener {
+                    dialog.dismiss()
+
+                    if (isCustomer) {
+                        showCustomerProfile(result.id)
+                    } else {
+                        showVehicleProfile(result.id)
+                    }
+                }
+            }
+
+            resultsBox.addView(
+                item,
+                matchWidth().apply {
+                    setMargins(0, dp(5), 0, dp(5))
+                }
+            )
+        }
+    }
+
+    query.addTextChangedListener(object : TextWatcher {
+        override fun beforeTextChanged(
+            s: CharSequence?,
+            start: Int,
+            count: Int,
+            after: Int
+        ) {}
+
+        override fun onTextChanged(
+            s: CharSequence?,
+            start: Int,
+            before: Int,
+            count: Int
+        ) {
+            refreshResults()
+        }
+
+        override fun afterTextChanged(s: Editable?) {}
+    })
+
+    dialog.show()
+}
+
     // البحث عن السيارات
 
     private fun vehicleSearchDialog() {
