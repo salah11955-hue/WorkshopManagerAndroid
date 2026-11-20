@@ -1613,15 +1613,9 @@ if (type == "password") {
                 setMargins(0, dp(6), 0, dp(6))
             }
         )
-    
+
     }
-private fun addAction(
-    label: String,
-    color: Int = blue,
-    action: () -> Unit
-) {
-    addAction(label, action, color)
-}
+
     private fun roundedBackground(
         color: Int,
         radius: Int
