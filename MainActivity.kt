@@ -195,14 +195,25 @@ private fun addAction(
                         suggestionsAdapter.notifyDataSetChanged()
 
                         if (matches.isNotEmpty() && hasFocus()) {
-    post {
-        if (hasFocus()) {
-            showDropDown()
+                            post {
+                                if (hasFocus()) {
+                                    showDropDown()
+                                }
+                            }
+                        } else {
+                            dismissDropDown()
+                        }
+                    }
+                })
+            }
         }
     }
-} else {
-    dismissDropDown()
-}
+
+    private fun matchWidth() = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    )
+
 
     private fun matchWidth() = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
