@@ -112,7 +112,13 @@ private fun addAction(
         }
     )
 }
-
+private fun addAction(
+    label: String,
+    color: Int = blue,
+    action: () -> Unit
+) {
+    addAction(label, action, color)
+}
     private fun rounded(color: Int) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = dp(12).toFloat()
