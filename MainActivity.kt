@@ -8,6 +8,8 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -126,11 +128,14 @@ private fun addAction(
 
     private fun field(
         hint: String,
-        type: String = "text"
-    ): EditText {
-        return EditText(this).apply {
+        type: String = "text",
+        suggestionKeys: List<String> = emptyList()
+    ): AutoCompleteTextView {
+        return AutoCompleteTextView(this).apply {
             this.hint = hint
             textSize = 15f
+            setTextColor(dark)
+            setHintTextColor(Color.GRAY)
             setSingleLine(type != "multiline")
             inputType = when (type) {
                 "phone" -> InputType.TYPE_CLASS_PHONE
@@ -143,7 +148,60 @@ private fun addAction(
                     InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 else -> InputType.TYPE_CLASS_TEXT
             }
-            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = GradientDrawable().apply {
+                setColor(Color.WHITE)
+                cornerRadius = dp(10).toFloat()
+                setStroke(dp(1), Color.rgb(220, 225, 232))
+            }
+
+            if (suggestionKeys.isNotEmpty() &&
+                type != "password" && type != "number" &&
+                type != "decimal" && type != "multiline"
+            ) {
+                threshold = 1
+                val suggestionsAdapter = ArrayAdapter<String>(
+                    this@MainActivity,
+                    android.R.layout.simple_dropdown_item_1line,
+                    mutableListOf()
+                )
+                setAdapter(suggestionsAdapter)
+                setDropDownVerticalOffset(dp(4))
+
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(
+                        text: CharSequence?, start: Int, count: Int, after: Int
+                    ) = Unit
+
+                    override fun onTextChanged(
+                        text: CharSequence?, start: Int, before: Int, count: Int
+                    ) = Unit
+
+                    override fun afterTextChanged(editable: Editable?) {
+                        val prefix = editable?.toString().orEmpty().trim()
+                        if (prefix.isBlank()) {
+                            suggestionsAdapter.clear()
+                            dismissDropDown()
+                            return
+                        }
+
+                        val matches = suggestionKeys
+                            .flatMap { key -> db.suggestions(key, prefix) }
+                            .distinct()
+                            .take(10)
+
+                        suggestionsAdapter.clear()
+                        suggestionsAdapter.addAll(matches)
+                        suggestionsAdapter.notifyDataSetChanged()
+
+                        if (matches.isNotEmpty() && hasFocus) {
+                            post { if (hasFocus) showDropDown() }
+                        } else {
+                            dismissDropDown()
+                        }
+                    }
+                })
+            }
         }
     }
 
@@ -362,7 +420,14 @@ private fun addAction(
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
 
-        views.forEach { box.addView(it, matchWidth()) }
+        views.forEach { view ->
+            box.addView(
+                view,
+                matchWidth().apply {
+                    setMargins(0, dp(4), 0, dp(7))
+                }
+            )
+        }
 
         val scroll = ScrollView(this)
         scroll.addView(box)
@@ -402,9 +467,9 @@ private fun addAction(
     private fun customerForm() {
         if (!allowed("customers", "add")) return
 
-        val name = field("اسم العميل")
-        val phone = field("رقم الهاتف", "phone")
-        val alt = field("هاتف إضافي", "phone")
+        val name = field("اسم العميل", suggestionKeys = listOf("customer_name"))
+        val phone = field("رقم الهاتف", "phone", listOf("customer_phone"))
+        val alt = field("هاتف إضافي", "phone", listOf("customer_phone"))
         val address = field("العنوان")
         val notes = field("ملاحظات", "multiline")
 
@@ -452,8 +517,8 @@ private fun addAction(
         val model = field("طراز السيارة")
         val year = field("سنة الصنع", "number")
         val engine = field("نوع المحرك")
-        val plate = field("رقم اللوحة")
-        val vin = field("رقم الهيكل VIN")
+        val plate = field("رقم اللوحة", suggestionKeys = listOf("plate"))
+        val vin = field("رقم الهيكل VIN", suggestionKeys = listOf("vin"))
         val odometer = field("قراءة العداد", "number")
 
         val views = mutableListOf<View>()
@@ -492,26 +557,13 @@ private fun addAction(
     ) {
         if (!allowed("work_orders", "add")) return
 
-        val vehicles = db.vehicleOptions(selectedCustomerId)
-        if (vehicles.isEmpty()) {
-            toast("لا توجد سيارات لهذا العميل")
+        val customers = db.customerOptions()
+        if (customers.isEmpty()) {
+            toast("أضف عميلاً أولاً")
             return
         }
 
-        val vehicleSpinner = Spinner(this)
-        vehicleSpinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            vehicles.map { it.third }
-        )
-
-        if (selectedVehicleId != null) {
-            val index = vehicles.indexOfFirst { it.first == selectedVehicleId }
-            if (index >= 0) vehicleSpinner.setSelection(index)
-        }
-
         val customerSpinner = Spinner(this)
-        val customers = db.customerOptions()
         customerSpinner.adapter = ArrayAdapter(
             this,
             android.R.layout.simple_spinner_dropdown_item,
@@ -521,9 +573,52 @@ private fun addAction(
         if (selectedCustomerId != null) {
             val index = customers.indexOfFirst { it.first == selectedCustomerId }
             if (index >= 0) customerSpinner.setSelection(index)
+            customerSpinner.isEnabled = false
         }
 
-        if (selectedCustomerId != null) customerSpinner.isEnabled = false
+        var vehicles = db.vehicleOptions(selectedCustomerId)
+        val vehicleSpinner = Spinner(this)
+        val vehicleAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            vehicles.map { it.third }.toMutableList()
+        )
+        vehicleSpinner.adapter = vehicleAdapter
+
+        fun loadVehicles(customerId: Long?, preferredVehicleId: Long? = null) {
+            vehicles = db.vehicleOptions(customerId)
+            vehicleAdapter.clear()
+            vehicleAdapter.addAll(vehicles.map { it.third })
+            vehicleAdapter.notifyDataSetChanged()
+
+            val preferredIndex = preferredVehicleId?.let { id ->
+                vehicles.indexOfFirst { it.first == id }
+            } ?: -1
+            if (preferredIndex >= 0) vehicleSpinner.setSelection(preferredIndex)
+
+            vehicleSpinner.isEnabled = vehicles.isNotEmpty()
+        }
+
+        if (selectedCustomerId == null) {
+            customerSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onNothingSelected(parent: AdapterView<*>?) {
+                    loadVehicles(null)
+                }
+
+                override fun onItemSelected(
+                    parent: AdapterView<*>?,
+                    view: View?,
+                    position: Int,
+                    id: Long
+                ) {
+                    val customerId = customers.getOrNull(position)?.first
+                    loadVehicles(customerId)
+                }
+            }
+            loadVehicles(customers.getOrNull(customerSpinner.selectedItemPosition)?.first)
+        } else {
+            loadVehicles(selectedCustomerId, selectedVehicleId)
+        }
 
         val odometer = field("قراءة العداد", "number")
         val complaint = field("شكوى العميل", "multiline")
@@ -548,7 +643,7 @@ private fun addAction(
                     ?: throw IllegalArgumentException("اختر العميل")
 
                 val vehicle = vehicles.getOrNull(vehicleSpinner.selectedItemPosition)
-                    ?: throw IllegalArgumentException("اختر السيارة")
+                    ?: throw IllegalArgumentException("لا توجد سيارة مرتبطة بالعميل المحدد")
 
                 require(vehicle.second == customerId) {
                     "السيارة لا تتبع العميل المحدد"
@@ -575,8 +670,8 @@ private fun addAction(
     private fun partForm() {
         if (!allowed("parts", "add")) return
 
-        val number = field("رقم القطعة")
-        val name = field("اسم القطعة")
+        val number = field("رقم القطعة", suggestionKeys = listOf("part_number"))
+        val name = field("اسم القطعة", suggestionKeys = listOf("part_name"))
         val qty = field("الكمية", "decimal")
         val unit = field("الوحدة")
         val buy = field("سعر الشراء", "decimal")
@@ -735,8 +830,8 @@ private fun addAction(
 
         page("استقبال سيارة", "ابحث برقم الهاتف أو رقم الهيكل أو اللوحة")
 
-        val phone = field("رقم هاتف العميل", "phone")
-        val identifier = field("رقم الهيكل VIN أو رقم اللوحة")
+        val phone = field("رقم هاتف العميل", "phone", listOf("customer_phone"))
+        val identifier = field("رقم الهيكل VIN أو رقم اللوحة", suggestionKeys = listOf("vin", "plate"))
 
         root.addView(phone, matchWidth())
         root.addView(identifier, matchWidth())
@@ -760,57 +855,94 @@ private fun addAction(
             return
         }
 
-        val customerResult = db.searchReception(cleanPhone)
-            .firstOrNull { it.type == "customer" }
+        val customers = db.searchReception(cleanPhone)
+            .filter { it.type == "customer" }
+            .distinctBy { it.id }
 
-        val customerId = customerResult?.id
+        val vehicles = db.searchReceptionDetailed(cleanIdentifier)
+            .mapNotNull { it.vehicle }
+            .distinctBy { it.id }
 
-        val vehicleMatch = db.searchReceptionDetailed(cleanIdentifier)
-            .firstOrNull { it.vehicle != null }
+        if (customers.isEmpty() && vehicles.isEmpty()) {
+            newCustomerAndVehicleForm(cleanPhone, cleanIdentifier)
+            return
+        }
 
-        val customer = customerId?.let { db.getCustomerProfile(it) }
-        val vehicle = vehicleMatch?.vehicle
-
-        when {
-            customer != null && vehicle != null -> {
-                if (vehicle.customerId == customer.id) {
+        fun continueWith(customerId: Long?, vehicleId: Long?) {
+            when {
+                customerId != null && vehicleId != null -> {
+                    val customer = db.getCustomerProfile(customerId)
+                    val vehicle = db.getVehicleProfile(vehicleId)
+                    if (customer == null || vehicle == null) {
+                        toast("تعذر تحميل بيانات العميل أو السيارة")
+                    } else if (vehicle.customerId == customer.id) {
+                        showMessage(
+                            "تم التحقق من الملكية",
+                            "العميل: ${customer.name}\n" +
+                                "السيارة: ${vehicle.make} ${vehicle.model}\n" +
+                                "اللوحة: ${vehicle.plate}\n\n" +
+                                "البيانات متطابقة."
+                        )
+                        receptionChoices(customer.id, vehicle.id)
+                    } else {
+                        ownershipConflict(customer.id, vehicle.id)
+                    }
+                }
+                customerId != null -> {
+                    val customer = db.getCustomerProfile(customerId) ?: return
+                    val customerVehicles = db.getCustomerVehicles(customerId)
+                    if (customerVehicles.isNotEmpty()) {
+                        showCustomerVehicles(customerId)
+                    } else {
+                        AlertDialog.Builder(this)
+                            .setTitle("العميل موجود")
+                            .setMessage("لم نعثر على سيارة مطابقة. هل تريد تسجيل سيارة جديدة لهذا العميل؟")
+                            .setPositiveButton("إضافة سيارة") { _, _ -> vehicleForm(customer.id) }
+                            .setNegativeButton("إلغاء", null)
+                            .show()
+                    }
+                }
+                vehicleId != null -> {
+                    val vehicle = db.getVehicleProfile(vehicleId) ?: return
                     showMessage(
-                        "تم التحقق من الملكية",
-                        "العميل: ${customer.name}\n" +
-                            "السيارة: ${vehicle.make} ${vehicle.model}\n" +
-                            "اللوحة: ${vehicle.plate}\n\n" +
-                            "البيانات متطابقة."
+                        "السيارة موجودة",
+                        "السيارة مسجلة باسم: ${vehicle.ownerName}\n" +
+                            "هاتف المالك الحالي: ${vehicle.ownerPhone}\n\n" +
+                            "لم نعثر على عميل مطابق برقم الهاتف المدخل."
                     )
-                    receptionChoices(customer.id, vehicle.id)
-                } else {
-                    ownershipConflict(customer.id, vehicle.id)
+                    newCustomerForExistingVehicle(vehicle.id)
                 }
             }
+        }
 
-            customer != null && vehicle == null -> {
-                AlertDialog.Builder(this)
-                    .setTitle("العميل موجود")
-                    .setMessage("لم نعثر على السيارة. يمكنك تسجيل سيارة جديدة لهذا العميل.")
-                    .setPositiveButton("إضافة السيارة") { _, _ ->
-                        vehicleForm(customer.id)
+        fun chooseVehicle(customerId: Long?) {
+            when {
+                vehicles.isEmpty() -> continueWith(customerId, null)
+                vehicles.size == 1 -> continueWith(customerId, vehicles.first().id)
+                else -> AlertDialog.Builder(this)
+                    .setTitle("اختر السيارة المطابقة")
+                    .setItems(vehicles.map {
+                        "${it.make} ${it.model} — ${it.plate}\nVIN: ${it.vin}"
+                    }.toTypedArray()) { _, index ->
+                        continueWith(customerId, vehicles[index].id)
                     }
                     .setNegativeButton("إلغاء", null)
                     .show()
             }
+        }
 
-            customer == null && vehicle != null -> {
-                showMessage(
-                    "السيارة موجودة",
-                    "السيارة مسجلة باسم: ${vehicle.ownerName}\n" +
-                        "هاتف المالك الحالي: ${vehicle.ownerPhone}\n\n" +
-                        "لم نعثر على عميل برقم الهاتف المدخل."
-                )
-                newCustomerForExistingVehicle(vehicle.id)
-            }
-
-            else -> {
-                newCustomerAndVehicleForm(cleanPhone, cleanIdentifier)
-            }
+        when {
+            customers.isEmpty() -> chooseVehicle(null)
+            customers.size == 1 -> chooseVehicle(customers.first().id)
+            else -> AlertDialog.Builder(this)
+                .setTitle("اختر العميل المطابق")
+                .setItems(customers.map {
+                    "${it.title}\n${it.subtitle}"
+                }.toTypedArray()) { _, index ->
+                    chooseVehicle(customers[index].id)
+                }
+                .setNegativeButton("إلغاء", null)
+                .show()
         }
     }
 
@@ -909,9 +1041,9 @@ private fun addAction(
     private fun newCustomerForExistingVehicle(vehicleId: Long) {
         if (!allowed("customers", "add")) return
 
-        val name = field("اسم العميل الجديد")
-        val phone = field("رقم الهاتف", "phone")
-        val alt = field("هاتف إضافي", "phone")
+        val name = field("اسم العميل الجديد", suggestionKeys = listOf("customer_name"))
+        val phone = field("رقم الهاتف", "phone", listOf("customer_phone"))
+        val alt = field("هاتف إضافي", "phone", listOf("customer_phone"))
         val address = field("العنوان")
 
         formDialog(
@@ -925,7 +1057,9 @@ private fun addAction(
                     alt.text.toString(),
                     address.text.toString()
                 )
-                done(dialog)
+                dialog.dismiss()
+                if (activeFormDialog === dialog) activeFormDialog = null
+                toast("تم تسجيل العميل. يرجى تحديد إجراء الملكية")
                 ownershipConflict(id, vehicleId)
             } catch (e: Exception) {
                 toast(e.message ?: "تعذر إضافة العميل")
@@ -941,17 +1075,17 @@ private fun addAction(
             !allowed("vehicles", "add")
         ) return
 
-        val name = field("اسم العميل")
-        val phone = field("رقم الهاتف", "phone")
+        val name = field("اسم العميل", suggestionKeys = listOf("customer_name"))
+        val phone = field("رقم الهاتف", "phone", listOf("customer_phone"))
         phone.setText(phoneValue)
-        val alt = field("هاتف إضافي", "phone")
+        val alt = field("هاتف إضافي", "phone", listOf("customer_phone"))
         val address = field("العنوان")
         val make = field("الشركة / الصانع")
         val model = field("طراز السيارة")
         val year = field("سنة الصنع", "number")
         val engine = field("نوع المحرك")
-        val plate = field("رقم اللوحة")
-        val vin = field("رقم الهيكل VIN")
+        val plate = field("رقم اللوحة", suggestionKeys = listOf("plate"))
+        val vin = field("رقم الهيكل VIN", suggestionKeys = listOf("vin"))
         val odometer = field("قراءة العداد", "number")
 
         if (identifierValue.length == 17) vin.setText(identifierValue)
@@ -970,7 +1104,7 @@ private fun addAction(
                 model.text.isBlank() ||
                 vin.text.isBlank()
             ) {
-                toast("أكمل بيانات العميل والسيارة قبل الحفظ")
+                toast("أكمل بيانات العميل والسيارة، ورقم الهيكل VIN مطلوب")
                 return@formDialog
             }
 
@@ -1005,7 +1139,7 @@ private fun addAction(
 
     private fun customerSearchDialog() {
         if (!allowed("customers", "view")) return
-        val query = field("رقم هاتف العميل أو اسمه")
+        val query = field("رقم هاتف العميل أو اسمه", suggestionKeys = listOf("customer_name", "customer_phone"))
 
         AlertDialog.Builder(this)
             .setTitle("بحث عن عميل")
@@ -1033,7 +1167,7 @@ private fun addAction(
 
     private fun vehicleSearchDialog() {
         if (!allowed("vehicles", "view")) return
-        val query = field("رقم الهيكل أو اللوحة أو اسم السيارة")
+        val query = field("رقم الهيكل أو اللوحة", suggestionKeys = listOf("vin", "plate"))
 
         AlertDialog.Builder(this)
             .setTitle("بحث عن سيارة")
@@ -1104,11 +1238,18 @@ private fun addAction(
             "العنوان: ${c.address}\n" +
             "ملاحظات: ${c.notes}"
 
+        val vehicles = db.getCustomerVehicles(customerId)
+        val vehicleSummary = if (vehicles.isEmpty()) {
+            "\n\nالسيارات المسجلة: لا توجد سيارات"
+        } else {
+            "\n\nالسيارات المسجلة: ${vehicles.size}"
+        }
+
         AlertDialog.Builder(this)
             .setTitle("ملف العميل")
-            .setMessage(message)
+            .setMessage(message + vehicleSummary)
             .setItems(
-                arrayOf("سيارات العميل", "سجل زيارات العميل")
+                arrayOf("عرض سيارات العميل", "سجل زيارات العميل")
             ) { _, which ->
                 when (which) {
                     0 -> showCustomerVehicles(customerId)
