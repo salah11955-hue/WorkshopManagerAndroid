@@ -215,10 +215,7 @@ private fun addAction(
     )
 
 
-    private fun matchWidth() = LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT,
-        ViewGroup.LayoutParams.WRAP_CONTENT
-    )
+    
 
     private fun dp(value: Int) =
         (value * resources.displayMetrics.density).toInt()
