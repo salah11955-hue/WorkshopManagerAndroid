@@ -2,6 +2,7 @@
 package com.khubara.workshop
 
 import android.app.Activity
+import android.content.ContentValues
 import android.app.AlertDialog
 import android.os.Bundle
 import android.graphics.Color
@@ -194,12 +195,8 @@ private fun addAction(
                         suggestionsAdapter.addAll(matches)
                         suggestionsAdapter.notifyDataSetChanged()
 
-                        if (matches.isNotEmpty() && hasFocus()) {
-                            post {
-                                if (hasFocus()) {
-                                    showDropDown()
-                                }
-                            }
+                        if (matches.isNotEmpty() && hasFocus) {
+                            post { if (hasFocus) showDropDown() }
                         } else {
                             dismissDropDown()
                         }
@@ -213,9 +210,6 @@ private fun addAction(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.WRAP_CONTENT
     )
-
-
-    
 
     private fun dp(value: Int) =
         (value * resources.displayMetrics.density).toInt()
@@ -345,14 +339,20 @@ private fun addAction(
         )
 
         addText("ملخص الورشة", 17f, blue, true)
-        addText(
-            "العملاء: ${db.count("customers")}     " +
-                "السيارات: ${db.count("vehicles")}"
-        )
-        addText(
-            "أوامر الإصلاح: ${db.count("work_orders")}     " +
-                "قطع الغيار: ${db.count("parts")}"
-        )
+        val summary = mutableListOf<String>()
+        if (db.hasPermission("customers", "view")) {
+            summary += "العملاء: ${db.count("customers")}"
+        }
+        if (db.hasPermission("vehicles", "view")) {
+            summary += "السيارات: ${db.count("vehicles")}"
+        }
+        if (db.hasPermission("work_orders", "view")) {
+            summary += "أوامر الإصلاح: ${db.count("work_orders")}"
+        }
+        if (db.hasPermission("parts", "view")) {
+            summary += "قطع الغيار: ${db.count("parts")}"
+        }
+        if (summary.isNotEmpty()) addText(summary.joinToString("     "))
 
         addText("الاستقبال", 17f, gold, true)
         addAction("استقبال سيارة / البحث عن عميل أو سيارة") {
@@ -489,7 +489,8 @@ private fun addAction(
                     name.text.toString(),
                     phone.text.toString(),
                     alt.text.toString(),
-                    address.text.toString()
+                    address.text.toString(),
+                    notes.text.toString()
                 )
                 done(dialog)
             } catch (e: Exception) {
@@ -527,13 +528,14 @@ private fun addAction(
         val plate = field("رقم اللوحة", suggestionKeys = listOf("plate"))
         val vin = field("رقم الهيكل VIN", suggestionKeys = listOf("vin"))
         val odometer = field("قراءة العداد", "number")
+        val notes = field("ملاحظات السيارة", "multiline")
 
         val views = mutableListOf<View>()
         if (customerId == null) {
             views.add(TextView(this).apply { text = "العميل" })
             views.add(customer)
         }
-        views.addAll(listOf(make, model, year, engine, plate, vin, odometer))
+        views.addAll(listOf(make, model, year, engine, plate, vin, odometer, notes))
 
         formDialog("إضافة سيارة", views) { dialog ->
             try {
@@ -549,7 +551,8 @@ private fun addAction(
                     engine.text.toString(),
                     plate.text.toString(),
                     vin.text.toString(),
-                    odometer.text.toString()
+                    odometer.text.toString(),
+                    notes.text.toString()
                 )
                 done(dialog)
             } catch (e: Exception) {
@@ -866,8 +869,15 @@ private fun addAction(
             .filter { it.type == "customer" }
             .distinctBy { it.id }
 
-        val vehicles = db.searchReceptionDetailed(cleanIdentifier)
-            .mapNotNull { it.vehicle }
+        val normalizedIdentifier = WorkshopDb.normalizeVin(cleanIdentifier)
+        val vehicles = db.searchVehicles(cleanIdentifier)
+            .filter { vehicle ->
+                val vinMatch = normalizedIdentifier.length == 17 &&
+                    vehicle.vin.equals(normalizedIdentifier, ignoreCase = true)
+                val plateMatch = cleanIdentifier.isNotBlank() &&
+                    vehicle.plate.contains(cleanIdentifier, ignoreCase = true)
+                vinMatch || plateMatch
+            }
             .distinctBy { it.id }
 
         if (customers.isEmpty() && vehicles.isEmpty()) {
@@ -898,13 +908,27 @@ private fun addAction(
                 customerId != null -> {
                     val customer = db.getCustomerProfile(customerId) ?: return
                     val customerVehicles = db.getCustomerVehicles(customerId)
-                    if (customerVehicles.isNotEmpty()) {
-                        showCustomerVehicles(customerId)
+                    val choices = mutableListOf<String>()
+                    if (customerVehicles.isNotEmpty() &&
+                        db.hasPermission("vehicles", "view")) {
+                        choices += "عرض سيارات العميل (${customerVehicles.size})"
+                    }
+                    if (db.hasPermission("vehicles", "add")) {
+                        choices += "إضافة سيارة جديدة لهذا العميل"
+                    }
+                    if (choices.isEmpty()) {
+                        toast("لا توجد صلاحية لعرض السيارات أو إضافتها")
                     } else {
                         AlertDialog.Builder(this)
-                            .setTitle("العميل موجود")
-                            .setMessage("لم نعثر على سيارة مطابقة. هل تريد تسجيل سيارة جديدة لهذا العميل؟")
-                            .setPositiveButton("إضافة سيارة") { _, _ -> vehicleForm(customer.id) }
+                            .setTitle("العميل موجود — ${customer.name}")
+                            .setMessage("لم نعثر على سيارة مطابقة للبيانات المدخلة.")
+                            .setItems(choices.toTypedArray()) { _, index ->
+                                if (choices[index].startsWith("عرض سيارات")) {
+                                    showCustomerVehicles(customer.id)
+                                } else {
+                                    vehicleForm(customer.id)
+                                }
+                            }
                             .setNegativeButton("إلغاء", null)
                             .show()
                     }
@@ -1087,6 +1111,7 @@ private fun addAction(
         phone.setText(phoneValue)
         val alt = field("هاتف إضافي", "phone", listOf("customer_phone"))
         val address = field("العنوان")
+        val customerNotes = field("ملاحظات العميل", "multiline")
         val make = field("الشركة / الصانع")
         val model = field("طراز السيارة")
         val year = field("سنة الصنع", "number")
@@ -1094,6 +1119,7 @@ private fun addAction(
         val plate = field("رقم اللوحة", suggestionKeys = listOf("plate"))
         val vin = field("رقم الهيكل VIN", suggestionKeys = listOf("vin"))
         val odometer = field("قراءة العداد", "number")
+        val vehicleNotes = field("ملاحظات السيارة", "multiline")
 
         if (identifierValue.length == 17) vin.setText(identifierValue)
         else plate.setText(identifierValue)
@@ -1101,8 +1127,8 @@ private fun addAction(
         formDialog(
             "عميل وسيارة جديدة",
             listOf(
-                name, phone, alt, address,
-                make, model, year, engine, plate, vin, odometer
+                name, phone, alt, address, customerNotes,
+                make, model, year, engine, plate, vin, odometer, vehicleNotes
             )
         ) { dialog ->
             if (name.text.isBlank() ||
@@ -1113,6 +1139,18 @@ private fun addAction(
             ) {
                 toast("أكمل بيانات العميل والسيارة، ورقم الهيكل VIN مطلوب")
                 return@formDialog
+            }
+
+            val plateValue = plate.text.toString().trim()
+            if (plateValue.isNotBlank()) {
+                val duplicatePlate = db.readableDatabase.rawQuery(
+                    "SELECT id FROM vehicles WHERE TRIM(plate)=? COLLATE NOCASE LIMIT 1",
+                    arrayOf(plateValue)
+                ).use { it.moveToFirst() }
+                if (duplicatePlate) {
+                    toast("رقم اللوحة مسجل مسبقاً لسيارة أخرى")
+                    return@formDialog
+                }
             }
 
             val result = db.addCustomerAndVehicle(
@@ -1126,7 +1164,9 @@ private fun addAction(
                 engine.text.toString(),
                 plate.text.toString(),
                 vin.text.toString(),
-                odometer.text.toString()
+                odometer.text.toString(),
+                customerNotes.text.toString(),
+                vehicleNotes.text.toString()
             )
 
             if (result == null) {
@@ -1144,6 +1184,31 @@ private fun addAction(
     // البحث وملفات العملاء والسيارات
     // ---------------------------------------------------------
 
+    private fun searchCustomerRecords(query: String): List<ReceptionSearchResult> {
+        val clean = query.trim()
+        if (clean.isBlank()) return emptyList()
+        val phone = WorkshopDb.normalizePhone(clean)
+        val namePattern = "%$clean%"
+        val phonePattern = if (phone.isBlank()) "%__NO_PHONE_MATCH__%" else "%$phone%"
+        val results = mutableListOf<ReceptionSearchResult>()
+        db.readableDatabase.rawQuery(
+            """SELECT id, name, phone FROM customers
+               WHERE name LIKE ? COLLATE NOCASE OR phone LIKE ?
+               ORDER BY id DESC LIMIT 30""",
+            arrayOf(namePattern, phonePattern)
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                results += ReceptionSearchResult(
+                    type = "customer",
+                    id = cursor.getLong(0),
+                    title = cursor.getString(1) ?: "",
+                    subtitle = "عميل — هاتف: ${cursor.getString(2) ?: ""}"
+                )
+            }
+        }
+        return results
+    }
+
     private fun customerSearchDialog() {
         if (!allowed("customers", "view")) return
         val query = field("رقم هاتف العميل أو اسمه", suggestionKeys = listOf("customer_name", "customer_phone"))
@@ -1152,8 +1217,7 @@ private fun addAction(
             .setTitle("بحث عن عميل")
             .setView(query)
             .setPositiveButton("بحث") { _, _ ->
-                val results = db.searchReception(query.text.toString())
-                    .filter { it.type == "customer" }
+                val results = searchCustomerRecords(query.text.toString())
 
                 if (results.isEmpty()) {
                     toast("لم يتم العثور على عميل")
@@ -1214,24 +1278,23 @@ private fun addAction(
             "الهاتف: ${v.ownerPhone}\n\n" +
             "ملاحظات: ${v.notes}"
 
-        AlertDialog.Builder(this)
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        if (db.hasPermission("work_orders", "view")) {
+            actions += "سجل زيارات السيارة" to { showVehicleVisits(vehicleId) }
+        }
+        actions += "سجل ملاك السيارة" to { showOwnerHistory(vehicleId) }
+        if (db.hasPermission("work_orders", "add")) {
+            actions += "زيارة جديدة" to { workOrderForm(v.customerId, vehicleId) }
+        }
+        val builder = AlertDialog.Builder(this)
             .setTitle("ملف السيارة")
             .setMessage(message)
-            .setItems(
-                arrayOf(
-                    "سجل زيارات السيارة",
-                    "سجل ملاك السيارة",
-                    "زيارة جديدة"
-                )
-            ) { _, which ->
-                when (which) {
-                    0 -> showVehicleVisits(vehicleId)
-                    1 -> showOwnerHistory(vehicleId)
-                    2 -> workOrderForm(v.customerId, vehicleId)
-                }
+        if (actions.isNotEmpty()) {
+            builder.setItems(actions.map { it.first }.toTypedArray()) { _, which ->
+                actions[which].second.invoke()
             }
-            .setPositiveButton("إغلاق", null)
-            .show()
+        }
+        builder.setPositiveButton("إغلاق", null).show()
     }
 
     private fun showCustomerProfile(customerId: Long) {
@@ -1245,29 +1308,38 @@ private fun addAction(
             "العنوان: ${c.address}\n" +
             "ملاحظات: ${c.notes}"
 
-        val vehicles = db.getCustomerVehicles(customerId)
-        val vehicleSummary = if (vehicles.isEmpty()) {
-            "\n\nالسيارات المسجلة: لا توجد سيارات"
-        } else {
-            "\n\nالسيارات المسجلة: ${vehicles.size}"
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle("ملف العميل")
-            .setMessage(message + vehicleSummary)
-            .setItems(
-                arrayOf("عرض سيارات العميل", "سجل زيارات العميل")
-            ) { _, which ->
-                when (which) {
-                    0 -> showCustomerVehicles(customerId)
-                    1 -> showOwnerHistoryForCustomer(customerId)
-                }
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        if (db.hasPermission("vehicles", "view")) {
+            val count = db.getCustomerVehicles(customerId).size
+            actions += "عرض سيارات العميل ($count)" to {
+                showCustomerVehicles(customerId)
             }
-            .setPositiveButton("إغلاق", null)
-            .show()
+        }
+        if (db.hasPermission("work_orders", "view")) {
+            actions += "سجل زيارات العميل" to {
+                showOwnerHistoryForCustomer(customerId)
+            }
+        }
+        if (actions.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("ملف العميل")
+                .setMessage(message)
+                .setPositiveButton("إغلاق", null)
+                .show()
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("ملف العميل")
+                .setMessage(message)
+                .setItems(actions.map { it.first }.toTypedArray()) { _, which ->
+                    actions[which].second.invoke()
+                }
+                .setPositiveButton("إغلاق", null)
+                .show()
+        }
     }
 
     private fun showCustomerVehicles(customerId: Long) {
+        if (!allowed("vehicles", "view")) return
         val vehicles = db.getCustomerVehicles(customerId)
         if (vehicles.isEmpty()) {
             toast("لا توجد سيارات مسجلة لهذا العميل")
@@ -1286,6 +1358,7 @@ private fun addAction(
     }
 
     private fun showVehicleVisits(vehicleId: Long) {
+        if (!allowed("work_orders", "view")) return
         val records = db.getVehicleWorkOrders(vehicleId)
         if (records.isEmpty()) {
             toast("لا توجد زيارات مسجلة")
@@ -1313,6 +1386,7 @@ private fun addAction(
     }
 
     private fun showOwnerHistory(vehicleId: Long) {
+        if (!allowed("vehicles", "view")) return
         val records = db.getVehicleOwnerHistory(vehicleId)
         if (records.isEmpty()) {
             showMessage("سجل الملكية", "لا توجد عمليات نقل ملكية مسجلة.")
@@ -1330,6 +1404,7 @@ private fun addAction(
     }
 
     private fun showOwnerHistoryForCustomer(customerId: Long) {
+        if (!allowed("work_orders", "view")) return
         val records = db.getCustomerWorkOrders(customerId)
         if (records.isEmpty()) {
             showMessage("سجل زيارات العميل", "لا توجد زيارات مسجلة.")
@@ -1365,38 +1440,95 @@ private fun addAction(
             "parts" -> "parts"
             else -> return
         }
-
         if (!allowed(module, "view")) return
 
-        val records = db.recentRows(table)
+        if (table == "parts") {
+            val rows = db.recentRows(table)
+            if (rows.isEmpty()) {
+                toast("لا توجد سجلات")
+                return
+            }
+            AlertDialog.Builder(this)
+                .setTitle(title)
+                .setItems(rows.toTypedArray()) { _, index ->
+                    showMessage(title, rows[index])
+                }
+                .setNegativeButton("إغلاق", null)
+                .show()
+            return
+        }
+
+        val records = db.recentClickableRecords(table)
         if (records.isEmpty()) {
             toast("لا توجد سجلات")
             return
         }
-
         AlertDialog.Builder(this)
             .setTitle(title)
-            .setItems(records.toTypedArray()) { _, index ->
+            .setItems(records.map { "${it.title}\n${it.subtitle}" }.toTypedArray()) { _, index ->
+                val record = records[index]
                 when (table) {
-                    "customers" -> {
-                        val users = db.listUsers()
-                        // يعرض السجل النصي؛ البحث التفصيلي متاح من زر البحث.
-                        showMessage(title, records[index])
-                    }
-                    "vehicles" -> {
-                        val vehicles = db.searchVehicles(
-                            records[index].substringAfter("\n")
-                        )
-                        if (vehicles.isNotEmpty()) {
-                            showVehicleProfile(vehicles.first().id)
+                    "customers" -> showCustomerProfile(record.id)
+                    "vehicles" -> showVehicleProfile(record.id)
+                    "work_orders" -> {
+                        if (record.vehicleId > 0 && db.hasPermission("vehicles", "view")) {
+                            showVehicleProfile(record.vehicleId)
                         } else {
-                            showMessage(title, records[index])
+                            showMessage("أمر الإصلاح #${record.id}", record.subtitle)
                         }
                     }
-                    else -> showMessage(title, records[index])
                 }
             }
             .setNegativeButton("إغلاق", null)
             .show()
     }
+
+
+/** Saves customer notes while preserving the existing four-argument WorkshopDb API. */
+private fun WorkshopDb.addCustomer(
+    name: String, phone: String, alt: String, address: String, notes: String
+): Long {
+    check(hasPermission("customers", "add")) { "ليس لديك صلاحية إضافة عميل" }
+    val cleanName = name.trim()
+    val cleanPhone = WorkshopDb.normalizePhone(phone)
+    require(cleanName.isNotBlank()) { "يرجى إدخال اسم العميل" }
+    require(cleanPhone.isNotBlank()) { "يرجى إدخال رقم هاتف صحيح" }
+    val values = ContentValues().apply {
+        put("name", cleanName)
+        put("phone", cleanPhone)
+        put("alternate_phones", alt.trim())
+        put("address", address.trim())
+        put("notes", notes.trim())
+    }
+    return writableDatabase.insertOrThrow("customers", null, values)
+}
+
+/** Adds vehicle notes and prevents a non-empty plate from being registered twice. */
+private fun WorkshopDb.addVehicle(
+    customerId: Long, make: String, model: String, year: String,
+    engine: String, plate: String, vin: String, odometer: String, notes: String
+): Long {
+    check(hasPermission("vehicles", "add")) { "ليس لديك صلاحية إضافة سيارة" }
+    val cleanPlate = plate.trim()
+    val database = writableDatabase
+    database.beginTransaction()
+    try {
+        if (cleanPlate.isNotBlank()) {
+            database.rawQuery(
+                "SELECT id FROM vehicles WHERE TRIM(plate)=? COLLATE NOCASE LIMIT 1",
+                arrayOf(cleanPlate)
+            ).use { cursor ->
+                require(!cursor.moveToFirst()) { "رقم اللوحة مسجل مسبقاً لسيارة أخرى" }
+            }
+        }
+        val id = addVehicle(customerId, make, model, year, engine, cleanPlate, vin, odometer)
+        val values = ContentValues().apply { put("notes", notes.trim()) }
+        database.update("vehicles", values, "id=?", arrayOf(id.toString()))
+        database.setTransactionSuccessful()
+        return id
+    } finally {
+        database.endTransaction()
+    }
+}
+
 }
