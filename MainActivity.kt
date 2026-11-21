@@ -1,1650 +1,1018 @@
-
 package com.khubara.workshop
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
+import android.text.InputType
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.graphics.Typeface
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
-import android.text.InputType
-import android.text.TextWatcher
-import android.text.Editable
 import android.widget.*
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 
 class MainActivity : Activity() {
 
     private lateinit var db: WorkshopDb
     private lateinit var root: LinearLayout
+    private lateinit var contentHolder: LinearLayout
+    private var loggedUser: AuthUser? = null
     private var activeFormDialog: AlertDialog? = null
+    private var currentTab: String = "home"
+    private var pendingPhotoVehicleId: Long = -1L
+    private val PICK_PHOTO = 1001
 
-    private val navy = Color.rgb(16, 42, 67)
-    private val gold = Color.rgb(199, 154, 53)
-    private val pageColor = Color.rgb(244, 247, 250)
-    private val mutedColor = Color.rgb(115, 125, 135)
+    // ===== Modern Palette =====
+    private val primary = Color.rgb(15, 23, 42)      // Slate 900 - كحلي داكن
+    private val primaryLight = Color.rgb(30, 41, 59)
+    private val teal = Color.rgb(14, 165, 165)       // تركوازي
+    private val tealDark = Color.rgb(13, 148, 136)
+    private val gold = Color.rgb(245, 158, 11)       // ذهبي
+    private val bg = Color.rgb(241, 245, 249)         // خلفية فاتحة
+    private val cardBg = Color.WHITE
+    private val dark = Color.rgb(30, 41, 59)
+    private val muted = Color.rgb(100, 116, 139)
+    private val success = Color.rgb(22, 163, 74)
+    private val danger = Color.rgb(220, 38, 38)
+    private val warning = Color.rgb(245, 158, 11)
+    private val border = Color.rgb(226, 232, 240)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         db = WorkshopDb(this)
-
         if (db.hasUsers()) showLogin() else showCreateAdmin()
     }
 
-    // تسجيل الدخول وإنشاء المدير
+    override fun onDestroy() { super.onDestroy(); try { db.close() } catch (e: Exception) {} }
 
-    private fun showCreateAdmin() {
-        authScreen(
-            "مرحباً بك",
-            "أنشئ حساب المدير للبدء باستخدام نظام إدارة الورشة"
-        )
-
-        val name = field("اسم المدير")
-        val username = field("اسم المستخدم، مثال admin")
-        val password = field("كلمة المرور (6 أحرف على الأقل)", "password")
-        val confirm = field("تأكيد كلمة المرور", "password")
-
-        root.addView(name, matchWidth())
-        root.addView(username, matchWidth())
-        root.addView(password, matchWidth())
-        root.addView(confirm, matchWidth())
-
-        addAction("إنشاء حساب المدير", gold) {
-            val p = password.text.toString()
-
-            if (name.text.isBlank() || username.text.isBlank()) {
-                toast("أدخل اسم المدير واسم المستخدم")
-            } else if (p.length < 6) {
-                toast("كلمة المرور يجب ألا تقل عن 6 أحرف")
-            } else if (p != confirm.text.toString()) {
-                toast("كلمتا المرور غير متطابقتين")
-            } else {
-                val created = db.createAdmin(
-                    username.text.toString(),
-                    name.text.toString(),
-                    p
-                )
-
-                if (created) {
-                    toast("تم إنشاء حساب المدير بنجاح")
-                    showLogin()
-                } else {
-                    toast("تعذر إنشاء الحساب، تحقق من اسم المستخدم")
-                }
-            }
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == PICK_PHOTO && resultCode == RESULT_OK && data?.data != null && pendingPhotoVehicleId > 0) {
+            val uri = data.data.toString()
+            try {
+                contentResolver.takePersistableUriPermission(data.data!!, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (e: Exception) {}
+            db.addVehiclePhoto(pendingPhotoVehicleId, uri, "صورة السيارة")
+            toast("تمت إضافة الصورة")
+            showVehicleProfile(pendingPhotoVehicleId)
         }
     }
 
-    private fun showLogin() {
-        authScreen("تسجيل الدخول", "أدخل بيانات حسابك للمتابعة")
+    // ==================== Core UI Helpers ====================
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun matchWidth(): LinearLayout.LayoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    private fun wrap(): LinearLayout.LayoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
 
-        val username = field("اسم المستخدم")
-        val password = field("كلمة المرور", "password")
-
-        root.addView(username, matchWidth())
-        root.addView(password, matchWidth())
-
-        addAction("دخول إلى النظام", gold) {
-            if (db.authenticate(
-                    username.text.toString(),
-                    password.text.toString()
-                )
-            ) {
-                showDashboard()
-            } else {
-                toast("اسم المستخدم أو كلمة المرور غير صحيحة")
-            }
-        }
+    private fun rounded(color: Int, radius: Int = 16, stroke: Int = 0, strokeColor: Int = Color.TRANSPARENT): GradientDrawable {
+        return GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat(); if (stroke > 0) setStroke(dp(stroke), strokeColor) }
     }
 
-    private fun authScreen(title: String, subtitle: String) {
-        root = LinearLayout(this).apply {
+    private fun shell(title: String, subtitle: String = "") {
+        val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(24), dp(30), dp(24), dp(30))
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-            setBackgroundColor(pageColor)
-        }
-
-        val scroll = ScrollView(this)
-        scroll.addView(root)
-        setContentView(scroll)
-
-        val header = TextView(this).apply {
-            text = "خبراء هونداي وفورد"
-            textSize = 26f
-            setTextColor(Color.WHITE)
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding(dp(12), dp(32), dp(12), dp(32))
-            background = roundedBackground(navy, 18)
-        }
-        root.addView(header, matchWidth())
-
-        val titleView = TextView(this).apply {
-            text = title
-            textSize = 22f
-            setTextColor(navy)
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding(dp(8), dp(25), dp(8), dp(8))
-        }
-        root.addView(titleView)
-
-        val subtitleView = TextView(this).apply {
-            text = subtitle
-            textSize = 15f
-            setTextColor(mutedColor)
-            gravity = Gravity.CENTER
-            setPadding(dp(8), dp(8), dp(8), dp(20))
-        }
-        root.addView(subtitleView)
-    }
-
-    // لوحة التحكم
-
-    private fun showDashboard() {
-        activeFormDialog = null
-
-        root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(18), dp(16), dp(22))
-            setBackgroundColor(pageColor)
+            setBackgroundColor(bg)
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
-
-        val scroll = ScrollView(this)
-        scroll.addView(root)
-        setContentView(scroll)
-
+        // Header
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(18), dp(25), dp(18), dp(25))
-            background = roundedBackground(navy, 18)
+            setBackgroundColor(primary)
+            setPadding(dp(20), dp(18), dp(20), dp(14))
         }
-
-        val brand = TextView(this).apply {
-            text = "خبراء هونداي وفورد"
-            textSize = 25f
-            setTextColor(Color.WHITE)
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
+        val topRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val titleView = TextView(this).apply {
+            text = "ورشة خبارة"; textSize = 13f; setTextColor(Color.rgb(148, 163, 184)); typeface = Typeface.DEFAULT_BOLD
         }
-        header.addView(brand, matchWidth())
-
-        val subtitle = TextView(this).apply {
-            text = "نظام إدارة الورشة والصيانة"
-            textSize = 15f
-            setTextColor(Color.rgb(225, 230, 235))
-            gravity = Gravity.CENTER
-            setPadding(0, dp(7), 0, 0)
+        val userView = TextView(this).apply {
+            text = loggedUser?.fullName ?: ""; textSize = 12f; setTextColor(Color.WHITE)
+            setPadding(dp(8), dp(4), dp(8), dp(4)); background = rounded(Color.rgb(51, 65, 85), 20)
         }
-        header.addView(subtitle, matchWidth())
-
-        val accent = View(this).apply {
-            setBackgroundColor(gold)
+        topRow.addView(titleView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        topRow.addView(userView)
+        header.addView(topRow)
+        val h = TextView(this).apply { text = title; textSize = 22f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; setPadding(0, dp(8), 0, 0) }
+        header.addView(h)
+        if (subtitle.isNotBlank()) {
+            val s = TextView(this).apply { text = subtitle; textSize = 13f; setTextColor(Color.rgb(203, 213, 225)); setPadding(0, dp(4), 0, 0) }
+            header.addView(s)
         }
-        header.addView(
-            accent,
-            LinearLayout.LayoutParams(dp(65), dp(3)).apply {
-                gravity = Gravity.CENTER
-                topMargin = dp(13)
-            }
-        )
+        outer.addView(header, matchWidth())
 
-        root.addView(header, matchWidth())
-
-        val offlineNote = TextView(this).apply {
-            text = "●  يعمل محلياً دون الحاجة إلى الإنترنت"
-            textSize = 13f
-            setTextColor(Color.rgb(55, 115, 85))
-            gravity = Gravity.CENTER
-            setPadding(dp(8), dp(14), dp(8), dp(14))
+        val scroll = ScrollView(this).apply { setBackgroundColor(bg) }
+        root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(100))
+            setBackgroundColor(bg)
         }
-        root.addView(offlineNote)
-
-        addSectionTitle("إدارة الورشة")
-addAction("🚘  استقبال سيارة جديدة / مراجعة سجل سابق", gold) {
-    receptionSearchDialog()
-}
-        addTileRow(
-            "👤", "تسجيل عميل",
-            "🚗", "إضافة سيارة",
-            { customerForm() },
-            { vehicleForm() }
-        )
-
-        addTileRow(
-            "🔧", "أمر إصلاح",
-            "📦", "إضافة قطعة",
-            { workOrderForm() },
-            { partForm() }
-        )
-
-        addSectionTitle("ملف السيارة")
-
-        addAction("🚘  البحث عن سيارة وفتح ملفها", navy) {
-            vehicleSearchDialog()
-        }
-
-        addSectionTitle("ملخص الورشة")
-
-        val statsRow1 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        statsRow1.addView(
-            statCard("العملاء", db.count("customers"), "👥", "customers"),
-            weightedParams()
-        )
-        statsRow1.addView(
-            statCard("السيارات", db.count("vehicles"), "🚘", "vehicles"),
-            weightedParams()
-        )
-        root.addView(statsRow1)
-
-        val statsRow2 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        statsRow2.addView(
-            statCard("أوامر الإصلاح", db.count("work_orders"), "🔧", "work_orders"),
-            weightedParams()
-        )
-        statsRow2.addView(
-            statCard("قطع المخزون", db.count("parts"), "📦", "parts"),
-            weightedParams()
-        )
-        root.addView(statsRow2)
-
-        addSectionTitle("السجلات والحساب")
-
-        addAction("عرض السجلات", navy) {
-            recordsDialog()
-        }
-
-        addAction("تسجيل الخروج", Color.rgb(150, 45, 45)) {
-            showLogin()
-        }
-
-        val footer = TextView(this).apply {
-            text = "خبراء هونداي وفورد  •  الإصدار 0.5.0"
-            textSize = 12f
-            setTextColor(mutedColor)
-            gravity = Gravity.CENTER
-            setPadding(dp(8), dp(22), dp(8), dp(8))
-        }
-        root.addView(footer)
+        contentHolder = root
+        scroll.addView(root)
+        outer.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        // Bottom Nav
+        outer.addView(buildBottomNav(), matchWidth())
+        setContentView(outer)
     }
 
-    private fun addSectionTitle(title: String) {
+    private fun buildBottomNav(): LinearLayout {
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(8), dp(10), dp(8), dp(10))
+            elevation = dp(8).toFloat()
+        }
+        val items = listOf("الرئيسية" to "home", "العملاء" to "customers", "السيارات" to "vehicles", "أوامر" to "orders", "المخزون" to "parts", "المزيد" to "more")
+        for ((label, key) in items) {
+            val isActive = currentTab == key
+            val btn = TextView(this).apply {
+                text = label; textSize = 12f; gravity = Gravity.CENTER
+                setTextColor(if (isActive) tealDark else muted)
+                typeface = if (isActive) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                setPadding(dp(6), dp(8), dp(6), dp(8))
+                background = if (isActive) rounded(Color.rgb(204, 251, 241), 20) else null
+                setOnClickListener {
+                    currentTab = key
+                    when (key) {
+                        "home" -> showDashboard()
+                        "customers" -> showCustomersPage()
+                        "vehicles" -> showVehiclesPage()
+                        "orders" -> showWorkOrdersPage()
+                        "parts" -> showPartsPage()
+                        "more" -> showMorePage()
+                    }
+                }
+            }
+            nav.addView(btn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        return nav
+    }
+
+    private fun card(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(cardBg)
+            background = rounded(cardBg, 18, 1, border)
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            elevation = dp(2).toFloat()
+        }
+    }
+
+    private fun addCard(block: LinearLayout.() -> Unit) {
+        val c = card().apply(block)
+        root.addView(c, matchWidth().apply { setMargins(0, 0, 0, dp(12)) })
+    }
+
+    private fun sectionTitle(text: String, actionLabel: String? = null, onAction: (() -> Unit)? = null) {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val t = TextView(this).apply { this.text = text; textSize = 17f; setTextColor(primary); typeface = Typeface.DEFAULT_BOLD }
+        row.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (actionLabel != null && onAction != null) {
+            val b = TextView(this).apply {
+                this.text = actionLabel; textSize = 13f; setTextColor(tealDark); typeface = Typeface.DEFAULT_BOLD
+                setPadding(dp(10), dp(6), dp(10), dp(6)); background = rounded(Color.rgb(204, 251, 241), 20)
+                setOnClickListener { onAction() }
+            }
+            row.addView(b)
+        }
+        root.addView(row, matchWidth().apply { setMargins(0, dp(8), 0, dp(10)) })
+    }
+
+    private fun addText(text: String, size: Float = 15f, color: Int = dark, bold: Boolean = false) {
         val view = TextView(this).apply {
-            text = title
-            textSize = 18f
-            setTextColor(navy)
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(3), dp(17), dp(3), dp(9))
+            this.text = text; textSize = size; setTextColor(color)
+            if (bold) typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(2), dp(4), dp(2), dp(4))
         }
         root.addView(view, matchWidth())
     }
 
-    private fun statCard(
-        label: String,
-        count: Int,
-        symbol: String,
-        table: String
-    ): View {
-        val card = LinearLayout(this).apply {
-            isClickable = true
-            isFocusable = true
-            setOnClickListener {
-                showRecords(label, table)
-            }
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(8), dp(15), dp(8), dp(15))
-            background = roundedBackground(Color.WHITE, 14)
-            elevation = dp(2).toFloat()
-        }
+    private fun addMuted(text: String) { addText(text, 13f, muted) }
 
-        val icon = TextView(this).apply {
-            text = symbol
-            textSize = 25f
-            gravity = Gravity.CENTER
+    private fun addAction(label: String, action: () -> Unit, color: Int = tealDark) {
+        val button = Button(this).apply {
+            text = label; textSize = 15f; isAllCaps = false; setTextColor(Color.WHITE)
+            background = rounded(color, 14); setPadding(dp(10), dp(12), dp(10), dp(12))
+            elevation = dp(2).toFloat(); setOnClickListener { action() }
         }
-        card.addView(icon, matchWidth())
-
-        val number = TextView(this).apply {
-            text = count.toString()
-            textSize = 25f
-            setTextColor(navy)
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding(0, dp(5), 0, dp(3))
-        }
-        card.addView(number, matchWidth())
-
-        val caption = TextView(this).apply {
-            text = label
-            textSize = 13f
-            setTextColor(mutedColor)
-            gravity = Gravity.CENTER
-        }
-        card.addView(caption, matchWidth())
-
-        return card
+        root.addView(button, matchWidth().apply { setMargins(0, dp(4), 0, dp(4)) })
     }
 
-    private fun addTileRow(
-        icon1: String,
-        label1: String,
-        icon2: String,
-        label2: String,
-        action1: () -> Unit,
-        action2: () -> Unit
-    ) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        row.addView(dashboardTile(icon1, label1, action1), weightedParams())
-        row.addView(dashboardTile(icon2, label2, action2), weightedParams())
-
-        root.addView(row)
-    }
-
-    private fun dashboardTile(
-        symbol: String,
-        label: String,
-        action: () -> Unit
-    ): View {
-        val tile = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(8), dp(19), dp(8), dp(19))
-            background = roundedBackground(Color.WHITE, 14)
-            elevation = dp(2).toFloat()
-            isClickable = true
-            isFocusable = true
+    private fun addOutlineAction(label: String, action: () -> Unit) {
+        val button = Button(this).apply {
+            text = label; textSize = 14f; isAllCaps = false; setTextColor(primary)
+            background = rounded(Color.WHITE, 14, 1, border); setPadding(dp(10), dp(11), dp(10), dp(11))
             setOnClickListener { action() }
         }
-
-        val icon = TextView(this).apply {
-            text = symbol
-            textSize = 28f
-            gravity = Gravity.CENTER
-        }
-        tile.addView(icon, matchWidth())
-
-        val title = TextView(this).apply {
-            text = label
-            textSize = 15f
-            setTextColor(navy)
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding(0, dp(8), 0, 0)
-        }
-        tile.addView(title, matchWidth())
-
-        return tile
+        root.addView(button, matchWidth().apply { setMargins(0, dp(4), 0, dp(4)) })
     }
 
-    // العملاء
+    private fun addDangerAction(label: String, action: () -> Unit) { addAction(label, action, danger) }
 
-    private fun duplicateWarning(title: String, message: String) {
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setMessage(message)
-            .setPositiveButton("حسناً", null)
-            .show()
+    private fun fieldLabel(text: String): TextView {
+        return TextView(this).apply { this.text = text; textSize = 13f; setTextColor(dark); typeface = Typeface.DEFAULT_BOLD; setPadding(dp(4), dp(10), dp(4), dp(4)) }
     }
 
-    private fun customerForm() {
-        val name = field("اسم العميل", suggestionKey = "customer_name")
-        val phone = field(
-            "رقم الهاتف الأساسي (إلزامي)",
-            "phone",
-            "customer_phone"
-        )
-        val alt = field("أرقام بديلة، افصل بينها بفاصلة")
-        val address = field("العنوان")
-
-        formDialog("عميل جديد", listOf(name, phone, alt, address)) { dialog ->
-
-            if (name.text.isBlank() || phone.text.isBlank()) {
-                return@formDialog toast("أدخل الاسم ورقم الهاتف")
+    private fun field(hint: String, type: String = "text", suggestionKeys: List<String> = emptyList()): AutoCompleteTextView {
+        return AutoCompleteTextView(this).apply {
+            this.hint = hint; textSize = 15f; setTextColor(dark); setHintTextColor(Color.rgb(148, 163, 184))
+            setSingleLine(type != "multiline")
+            inputType = when (type) {
+                "phone" -> InputType.TYPE_CLASS_PHONE
+                "number" -> InputType.TYPE_CLASS_NUMBER
+                "decimal" -> InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                "password" -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                "multiline" -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                else -> InputType.TYPE_CLASS_TEXT
             }
-
-            val existing = db.findCustomerByPhone(phone.text.toString())
-
-            if (existing != null) {
-                return@formDialog duplicateWarning(
-                    "العميل مسجل مسبقاً",
-                    "رقم الهاتف الذي أدخلته مسجل باسم:\n\n$existing\n\nراجع سجل العميل قبل إضافة سجل جديد."
-                )
-            }
-
-            try {
-                db.addCustomer(
-                    name.text.toString(),
-                    phone.text.toString(),
-                    alt.text.toString(),
-                    address.text.toString()
-                )
-                done(dialog)
-            } catch (_: Exception) {
-                duplicateWarning(
-                    "تعذر الحفظ",
-                    "تعذر إضافة العميل. تحقق من رقم الهاتف والبيانات المدخلة."
-                )
-            }
-        }
-    }
-
-    // إضافة سيارة مع التحقق من رقم الهيكل
-
-    private fun vehicleForm() {
-        val customers = db.customerOptions()
-        if (customers.isEmpty()) return toast("سجّل العميل أولاً")
-
-        val owner = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                customers.map { it.second }
-            )
-        }
-
-        val make = field("الشركة، مثال Hyundai")
-        val model = field("الموديل")
-        val year = field("سنة الصنع")
-        val engine = field("المحرك")
-        val plate = field("رقم اللوحة", suggestionKey = "plate")
-        val vin = field("رقم الهيكل VIN (17 خانة)", suggestionKey = "vin")
-        val odo = field("عداد الكيلومترات الحالي")
-
-        formDialog(
-            "إضافة سيارة",
-            listOf(owner, make, model, year, engine, plate, vin, odo)
-        ) { dialog ->
-
-            val cleanVin = vin.text.toString().trim().uppercase()
-
-            if (cleanVin.length != 17) {
-                return@formDialog toast(
-                    "رقم الهيكل يجب أن يتكون من 17 خانة بالضبط"
-                )
-            }
-
-            if (!cleanVin.matches(Regex("[A-HJ-NPR-Z0-9]{17}"))) {
-                return@formDialog toast(
-                    "رقم الهيكل يجب أن يحتوي على أحرف وأرقام إنجليزية صحيحة، دون I أو O أو Q أو رموز"
-                )
-            }
-
-            val existingVin = db.findVehicleByVin(cleanVin)
-
-            if (existingVin != null) {
-                return@formDialog duplicateWarning(
-                    "السيارة مسجلة مسبقاً",
-                    "رقم الهيكل هذا موجود في سجل سيارة سابقة:\n\n$existingVin\n\nلا حاجة لإضافة السيارة مرة أخرى."
-                )
-            }
-
-            val existingPlate = db.findVehicleByPlate(plate.text.toString())
-
-            if (existingPlate != null) {
-                return@formDialog duplicateWarning(
-                    "رقم اللوحة مسجل مسبقاً",
-                    "هذه اللوحة مرتبطة بالسيارة التالية:\n\n$existingPlate\n\nراجع السجل قبل المتابعة."
-                )
-            }
-
-            try {
-                db.addVehicle(
-                    customers[owner.selectedItemPosition].first,
-                    make.text.toString(),
-                    model.text.toString(),
-                    year.text.toString(),
-                    engine.text.toString(),
-                    plate.text.toString(),
-                    cleanVin,
-                    odo.text.toString()
-                )
-                done(dialog)
-            } catch (e: Exception) {
-                duplicateWarning(
-                    "تعذر حفظ السيارة",
-                    e.message ?: "تحقق من البيانات المدخلة ورقم الهيكل."
-                )
-            }
-        }
-    }
-
-    // أوامر الإصلاح العامة
-
-    
-private fun workOrderForm() {
-    val vehicles = db.vehicleOptions()
-    if (vehicles.isEmpty()) return toast("سجّل سيارة أولاً")
-
-    val vehicle = Spinner(this).apply {
-        adapter = ArrayAdapter(
-            this@MainActivity,
-            android.R.layout.simple_spinner_dropdown_item,
-            vehicles.map { it.third }
-        )
-    }
-
-    val odo = field("قراءة العداد عند الزيارة", type = "number")
-    val complaint = field("شكوى العميل")
-    val diagnosis = field("التشخيص الفني الأولي")
-    val repair = field("تفاصيل الإصلاح المنفذ")
-
-    val statuses = arrayOf("مفتوح", "قيد العمل", "مكتمل")
-
-    val status = Spinner(this).apply {
-        adapter = ArrayAdapter(
-            this@MainActivity,
-            android.R.layout.simple_spinner_dropdown_item,
-            statuses
-        )
-    }
-
-    val labor = field("أجور العمل", type = "decimal")
-    val parts = field("تكلفة قطع الغيار", type = "decimal")
-
-    formDialog(
-        "أمر إصلاح جديد",
-        listOf(
-            vehicle, odo, complaint, diagnosis,
-            repair, status, labor, parts
-        )
-    ) { dialog ->
-        try {
-            val selected = vehicles[vehicle.selectedItemPosition]
-
-            db.addWorkOrder(
-                selected.second,
-                selected.first,
-                odo.text.toString(),
-                complaint.text.toString(),
-                diagnosis.text.toString(),
-                repair.text.toString(),
-                status.selectedItem.toString(),
-                labor.text.toString(),
-                parts.text.toString()
-            )
-
-            done(dialog)
-        } catch (_: Exception) {
-            toast("تعذر الحفظ، تحقق من قراءة العداد والتكاليف")
-        }
-    }
-}
-
-
-    // إضافة قطعة
-
-    private fun partForm() {
-        val number = field("رقم القطعة", suggestionKey = "part_number")
-        val name = field("اسم القطعة (إلزامي)", suggestionKey = "part_name")
-        val qty = field("الكمية")
-        val unit = field("الوحدة، مثال قطعة")
-        val buy = field("سعر الشراء")
-        val sell = field("سعر البيع")
-
-        formDialog(
-            "إضافة قطعة للمخزون",
-            listOf(number, name, qty, unit, buy, sell)
-        ) { dialog ->
-
-            if (name.text.isBlank()) {
-                return@formDialog toast("اسم القطعة مطلوب")
-            }
-
-            if (number.text.isNotBlank()) {
-                val existingPart = db.findPartByNumber(number.text.toString())
-
-                if (existingPart != null) {
-                    return@formDialog duplicateWarning(
-                        "رقم القطعة موجود مسبقاً",
-                        "رقم القطعة الذي أدخلته مسجل باسم:\n\n$existingPart\n\nراجع سجل المخزون قبل إضافة قطعة أخرى."
-                    )
-                }
-            }
-
-            try {
-                db.addPart(
-                    number.text.toString(),
-                    name.text.toString(),
-                    qty.text.toString(),
-                    unit.text.toString().ifBlank { "قطعة" },
-                    buy.text.toString(),
-                    sell.text.toString()
-                )
-                done(dialog)
-            } catch (_: Exception) {
-                duplicateWarning(
-                    "تعذر الحفظ",
-                    "تعذر إضافة القطعة. تحقق من البيانات المدخلة."
-                )
-            }
-        }
-    }
-
-// ---------- استقبال السيارة والبحث الموحد ----------
-
-private fun receptionSearchDialog() {
-    val box = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(16), dp(8), dp(16), dp(8))
-        layoutDirection = View.LAYOUT_DIRECTION_RTL
-    }
-
-    val description = TextView(this).apply {
-        text = "ابحث عن العميل أو السيارة قبل تسجيل زيارة جديدة"
-        textSize = 14f
-        setTextColor(mutedColor)
-        setPadding(0, dp(5), 0, dp(10))
-    }
-    box.addView(description, matchWidth())
-
-    val query = field(
-        "رقم الهاتف أو رقم الهيكل VIN أو رقم اللوحة"
-    )
-    box.addView(query, matchWidth())
-
-    val resultsBox = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(0, dp(8), 0, 0)
-    }
-    box.addView(resultsBox, matchWidth())
-
-    val scroll = ScrollView(this).apply {
-        addView(box)
-    }
-
-    val dialog = AlertDialog.Builder(this)
-        .setTitle("استقبال سيارة")
-        .setView(scroll)
-        .setNegativeButton("إغلاق", null)
-        .create()
-
-    fun refreshResults() {
-        resultsBox.removeAllViews()
-
-        val searchText = query.text.toString().trim()
-        if (searchText.isBlank()) return
-
-        val results = db.searchReception(searchText)
-
-        if (results.isEmpty()) {
-            val empty = TextView(this).apply {
-                text = "لا توجد نتائج مطابقة.\nيمكننا تسجيل العميل أو السيارة إذا لم تكن مسجلة."
-                textSize = 14f
-                setTextColor(mutedColor)
-                gravity = Gravity.CENTER
-                setPadding(dp(10), dp(20), dp(10), dp(20))
-            }
-            resultsBox.addView(empty, matchWidth())
-            return
-        }
-
-        results.forEach { result ->
-
-            val isCustomer = result.type == "customer"
-
-            val item = TextView(this).apply {
-                text =
-                    (if (isCustomer) "👤 عميل: " else "🚗 سيارة: ") +
-                    result.title +
-                    "\n" + result.subtitle +
-                    "\nاضغط لفتح السجل"
-
-                textSize = 14f
-                setTextColor(navy)
-                setPadding(dp(14), dp(14), dp(14), dp(14))
-                background = roundedBackground(Color.WHITE, 12)
-                isClickable = true
-                isFocusable = true
-
-                setOnClickListener {
-                    dialog.dismiss()
-
-                    if (isCustomer) {
-                        showCustomerProfile(result.id)
-                    } else {
-                        showVehicleProfile(result.id)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = rounded(Color.WHITE, 12, 1, border)
+            if (suggestionKeys.isNotEmpty() && type != "password" && type != "number" && type != "decimal" && type != "multiline") {
+                threshold = 1
+                val adapter = ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_dropdown_item_1line, mutableListOf())
+                setAdapter(adapter); setDropDownVerticalOffset(dp(4))
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(t: CharSequence?, s: Int, c: Int, a: Int) = Unit
+                    override fun onTextChanged(t: CharSequence?, s: Int, b: Int, c: Int) = Unit
+                    override fun afterTextChanged(e: Editable?) {
+                        val prefix = e?.toString().orEmpty().trim()
+                        if (prefix.isBlank()) { adapter.clear(); dismissDropDown(); return }
+                        val matches = suggestionKeys.filter { it.contains(prefix, ignoreCase = true) }.take(10)
+                        adapter.clear(); adapter.addAll(matches); if (matches.isNotEmpty()) showDropDown() else dismissDropDown()
                     }
-                }
+                })
             }
-
-            resultsBox.addView(
-                item,
-                matchWidth().apply {
-                    setMargins(0, dp(5), 0, dp(5))
-                }
-            )
         }
     }
 
-    query.addTextChangedListener(object : TextWatcher {
-        override fun beforeTextChanged(
-            s: CharSequence?,
-            start: Int,
-            count: Int,
-            after: Int
-        ) {}
+    private fun addFieldTo(parent: LinearLayout, label: String, hint: String, type: String = "text", suggestionKeys: List<String> = emptyList()): AutoCompleteTextView {
+        parent.addView(fieldLabel(label))
+        val f = field(hint, type, suggestionKeys)
+        parent.addView(f, matchWidth())
+        return f
+    }
 
-        override fun onTextChanged(
-            s: CharSequence?,
-            start: Int,
-            before: Int,
-            count: Int
-        ) {
-            refreshResults()
+    private fun spinner(options: List<String>, selected: String = ""): Spinner {
+        val sp = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, options)
+            background = rounded(Color.WHITE, 12, 1, border)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
         }
+        if (selected.isNotBlank()) { val idx = options.indexOf(selected); if (idx >= 0) sp.setSelection(idx) }
+        return sp
+    }
 
-        override fun afterTextChanged(s: Editable?) {}
-    })
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+    private fun showMessage(title: String, msg: String) {
+        AlertDialog.Builder(this).setTitle(title).setMessage(msg).setPositiveButton("حسناً", null).show()
+    }
+    private fun allowed(module: String, action: String): Boolean {
+        if (!db.hasPermission(module, action)) { toast("ليس لديك صلاحية"); return false }
+        return true
+    }
+    private fun confirm(title: String, msg: String, onYes: () -> Unit) {
+        AlertDialog.Builder(this).setTitle(title).setMessage(msg).setPositiveButton("نعم") { _, _ -> onYes() }.setNegativeButton("إلغاء", null).show()
+    }
 
-    dialog.show()
-}
-
-    // البحث عن السيارات
-
-    private fun vehicleSearchDialog() {
-        val box = LinearLayout(this).apply {
+    private fun statCard(title: String, value: String, sub: String, color: Int): LinearLayout {
+        return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(8), dp(18), dp(8))
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setBackgroundColor(Color.WHITE); background = rounded(Color.WHITE, 16, 1, border)
+            setPadding(dp(14), dp(14), dp(14), dp(14)); elevation = dp(1).toFloat()
+            val v = TextView(this@MainActivity).apply { text = value; textSize = 20f; setTextColor(color); typeface = Typeface.DEFAULT_BOLD }
+            val t = TextView(this@MainActivity).apply { text = title; textSize = 13f; setTextColor(dark); typeface = Typeface.DEFAULT_BOLD }
+            val s = TextView(this@MainActivity).apply { text = sub; textSize = 11f; setTextColor(muted) }
+            addView(v); addView(t); addView(s)
         }
-
-        val query = field("ابحث برقم الهيكل أو اللوحة أو الشركة أو الموديل أو اسم العميل")
-        box.addView(query, matchWidth())
-
-        val resultsBox = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        box.addView(resultsBox, matchWidth())
-
-        val scroll = ScrollView(this)
-        scroll.addView(box)
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("البحث عن سيارة")
-            .setView(scroll)
-            .setNegativeButton("إغلاق", null)
-            .create()
-
-        
-fun refreshResults() {
-    resultsBox.removeAllViews()
-
-    val searchText = query.text.toString()
-    if (searchText.isBlank()) return
-
-    val results = db.searchVehicles(searchText)
-
-    if (results.isEmpty()) {
-        val empty = TextView(this).apply {
-            text = "لا توجد سيارات مطابقة للبحث"
-            textSize = 14f
-            setTextColor(mutedColor)
-            gravity = Gravity.CENTER
-            setPadding(dp(10), dp(18), dp(10), dp(18))
-        }
-        resultsBox.addView(empty)
-        return
     }
 
-    results.forEach { vehicle ->
-        val item = TextView(this).apply {
-            text = "${vehicle.make} ${vehicle.model} ${vehicle.year}\n" +
-                "اللوحة: ${vehicle.plate.ifBlank { "غير مسجلة" }}\n" +
-                "VIN: ${vehicle.vin}\n" +
-                "المالك: ${vehicle.ownerName}"
-            textSize = 14f
-            setTextColor(navy)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            background = roundedBackground(Color.WHITE, 12)
-            isClickable = true
-            isFocusable = true
-            setOnClickListener {
-                dialog.dismiss()
-                showVehicleProfile(vehicle.id)
-            }
+    private fun addStatGrid(cards: List<LinearLayout>) {
+        for (i in cards.indices step 2) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(cards[i], LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+            if (i + 1 < cards.size) row.addView(cards[i+1], LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) })
+            else row.addView(View(this), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            root.addView(row, matchWidth().apply { setMargins(0, 0, 0, dp(10)) })
         }
-
-        val params = matchWidth().apply {
-            setMargins(0, dp(5), 0, dp(5))
-        }
-        resultsBox.addView(item, params)
     }
-}
+
+    private fun addRowItem(title: String, subtitle: String, badge: String? = null, badgeColor: Int = tealDark, onClick: () -> Unit) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.WHITE); background = rounded(Color.WHITE, 14, 1, border)
+            setPadding(dp(14), dp(12), dp(14), dp(12)); isClickable = true; setOnClickListener { onClick() }
+        }
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val t = TextView(this).apply { text = title; textSize = 15f; setTextColor(dark); typeface = Typeface.DEFAULT_BOLD }
+        val s = TextView(this).apply { text = subtitle; textSize = 12f; setTextColor(muted) }
+        texts.addView(t); texts.addView(s)
+        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (badge != null) {
+            val b = TextView(this).apply { text = badge; textSize = 11f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; setPadding(dp(10), dp(6), dp(10), dp(6)); background = rounded(badgeColor, 20); gravity = Gravity.CENTER }
+            row.addView(b)
+        }
+        root.addView(row, matchWidth().apply { setMargins(0, 0, 0, dp(8)) })
+    }
 
 
-                
-        query.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(
-                s: CharSequence?, start: Int, count: Int, after: Int
-            ) {}
+    // ==================== Auth ====================
+    private fun showLogin() {
+        val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(primary); layoutDirection = View.LAYOUT_DIRECTION_RTL; setPadding(dp(24), dp(48), dp(24), dp(24)) }
+        val logo = TextView(this).apply { text = "🔧 ورشة خبارة"; textSize = 28f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER }
+        val sub = TextView(this).apply { text = "إدارة الورشة باحتراف • عملاء • سيارات • مخزون • فواتير"; textSize = 13f; setTextColor(Color.rgb(203,213,225)); gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(28)) }
+        outer.addView(logo, matchWidth()); outer.addView(sub, matchWidth())
+        val cardBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE); background = rounded(Color.WHITE, 22); setPadding(dp(20), dp(22), dp(20), dp(22)) }
+        val title = TextView(this).apply { text = "تسجيل الدخول"; textSize = 20f; setTextColor(primary); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER }
+        cardBox.addView(title, matchWidth())
+        val userF = field("اسم المستخدم"); val passF = field("كلمة المرور", "password")
+        cardBox.addView(fieldLabel("اسم المستخدم")); cardBox.addView(userF, matchWidth())
+        cardBox.addView(fieldLabel("كلمة المرور")); cardBox.addView(passF, matchWidth())
+        val btn = Button(this).apply { text = "دخول"; textSize = 16f; setTextColor(Color.WHITE); background = rounded(tealDark, 14); setPadding(dp(10), dp(14), dp(10), dp(14)); setOnClickListener {
+            val u = userF.text.toString().trim(); val p = passF.text.toString()
+            if (u.isBlank() || p.isBlank()) { toast("أدخل اسم المستخدم وكلمة المرور"); return@setOnClickListener }
+            val user = db.authenticate(u, p)
+            if (user == null) toast("بيانات الدخول غير صحيحة") else { loggedUser = user; db.setActiveUser(user.id); showDashboard() }
+        } }
+        cardBox.addView(btn, matchWidth().apply { setMargins(0, dp(16), 0, 0) })
+        outer.addView(cardBox, matchWidth())
+        val scroll = ScrollView(this); scroll.addView(outer); setContentView(scroll)
+    }
 
-            override fun onTextChanged(
-                s: CharSequence?, start: Int, before: Int, count: Int
-            ) {
-                refreshResults()
+    private fun showCreateAdmin() {
+        val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(primary); layoutDirection = View.LAYOUT_DIRECTION_RTL; setPadding(dp(24), dp(40), dp(24), dp(24)) }
+        val t = TextView(this).apply { text = "مرحباً بك في ورشة خبارة"; textSize = 24f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER }
+        val s = TextView(this).apply { text = "أنشئ حساب المدير للبدء"; textSize = 14f; setTextColor(Color.rgb(203,213,225)); gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(24)) }
+        outer.addView(t, matchWidth()); outer.addView(s, matchWidth())
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE); background = rounded(Color.WHITE, 22); setPadding(dp(20), dp(20), dp(20), dp(20)) }
+        val nameF = field("الاسم الكامل"); val userF = field("اسم المستخدم"); val passF = field("كلمة مرور قوية", "password")
+        box.addView(fieldLabel("الاسم الكامل")); box.addView(nameF, matchWidth())
+        box.addView(fieldLabel("اسم المستخدم")); box.addView(userF, matchWidth())
+        box.addView(fieldLabel("كلمة المرور")); box.addView(passF, matchWidth())
+        val btn = Button(this).apply { text = "إنشاء حساب المدير"; setTextColor(Color.WHITE); background = rounded(tealDark, 14); setPadding(dp(10), dp(14), dp(10), dp(14)); setOnClickListener {
+            if (nameF.text.toString().isBlank() || userF.text.toString().isBlank() || passF.text.toString().length < 4) { toast("أكمل البيانات - كلمة المرور 4 أحرف على الأقل"); return@setOnClickListener }
+            val id = db.createUser(userF.text.toString(), passF.text.toString(), nameF.text.toString(), "مدير")
+            val user = db.authenticate(userF.text.toString(), passF.text.toString())
+            loggedUser = user; db.setActiveUser(id); toast("تم إنشاء حساب المدير"); showDashboard()
+        } }
+        box.addView(btn, matchWidth().apply { setMargins(0, dp(16), 0, 0) })
+        outer.addView(box, matchWidth())
+        val scroll = ScrollView(this); scroll.addView(outer); setContentView(scroll)
+    }
+
+    private fun logout() { loggedUser = null; db.setActiveUser(null); showLogin() }
+
+    // ==================== Dashboard ====================
+    private fun showDashboard() {
+        currentTab = "home"
+        shell("أهلاً، " + (loggedUser?.fullName ?: ""), "إليك نظرة سريعة على ورشتك اليوم")
+        val stats = db.getDashboardStats()
+        sectionTitle("نظرة سريعة")
+        addStatGrid(listOf(
+            statCard("إيراد اليوم", String.format("%.0f", stats.revenueToday) + " ر.ي", "مدفوعات اليوم", success),
+            statCard("أوامر مفتوحة", stats.openOrders.toString(), "تحتاج متابعة", warning),
+            statCard("إجمالي الديون", String.format("%.0f", stats.totalDebt) + " ر.ي", "مبالغ متبقية", danger),
+            statCard("تنبيه مخزون", stats.lowStockCount.toString(), "قطع وصلت للحد الأدنى", gold)
+        ))
+        // Alerts
+        val low = db.getLowStockParts()
+        if (low.isNotEmpty()) {
+            addCard {
+                val t = TextView(this@MainActivity).apply { text = "⚠️ تنبيه مخزون - " + low.size + " قطع تحتاج إعادة طلب"; textSize = 15f; setTextColor(danger); typeface = Typeface.DEFAULT_BOLD }
+                addView(t)
+                low.take(3).forEach { p ->
+                    val line = TextView(this@MainActivity).apply { text = "• " + p.name + " - المتبقي: " + p.quantity + " " + p.unit + " (الحد: " + p.minQuantity + ")"; textSize = 13f; setTextColor(dark); setPadding(0, dp(4), 0, 0) }
+                    addView(line)
+                }
+                val b = Button(this@MainActivity).apply { text = "عرض كل التنبيهات"; setTextColor(Color.WHITE); background = rounded(danger, 12); setOnClickListener { showPartsPage() } }
+                addView(b, matchWidth().apply { setMargins(0, dp(10), 0, 0) })
             }
+        }
+        sectionTitle("إجراءات سريعة")
+        // Quick actions grid 2 columns
+        val quick = listOf(
+            Triple("➕ عميل جديد", tealDark) { showAddCustomer() },
+            Triple("🚗 سيارة جديدة", primary) { showAddVehicle() },
+            Triple("🛠️ أمر شغل جديد", gold) { showAddWorkOrder() },
+            Triple("📦 إضافة قطعة", success) { showAddPart() }
+        )
+        for (i in quick.indices step 2) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (j in 0..1) {
+                if (i + j >= quick.size) break
+                val (label, col, act) = quick[i + j]
+                val btn = Button(this).apply { text = label; setTextColor(Color.WHITE); background = rounded(col, 14); setPadding(dp(8), dp(14), dp(8), dp(14)); setOnClickListener { act() } }
+                row.addView(btn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4); marginEnd = dp(4) })
+            }
+            root.addView(row, matchWidth().apply { setMargins(0, 0, 0, dp(8)) })
+        }
+        sectionTitle("بحث سريع", "بحث متقدم") { showAdvancedSearch() }
+        addCard {
+            val f = field("ابحث بالاسم، الهاتف، اللوحة، VIN...")
+            addView(fieldLabel("بحث فوري")); addView(f, matchWidth())
+            val btn = Button(this@MainActivity).apply { text = "بحث"; setTextColor(Color.WHITE); background = rounded(primary, 12); setOnClickListener { if (f.text.toString().isBlank()) toast("اكتب كلمة بحث") else showSearchResults(f.text.toString()) } }
+            addView(btn, matchWidth().apply { setMargins(0, dp(10), 0, 0) })
+        }
+        sectionTitle("أحدث أوامر الشغل")
+        val orders = db.getAllWorkOrders().take(5)
+        if (orders.isEmpty()) addMuted("لا توجد أوامر بعد - ابدأ بإضافة أول أمر شغل")
+        else orders.forEach { o ->
+            val badge = when (o.status) { "مكتمل" -> "مكتمل"; "مفتوح" -> "مفتوح"; else -> o.status }
+            val bc = if (o.status == "مكتمل") success else if (o.status == "مفتوح") warning else tealDark
+            addRowItem("أمر #" + o.id + " - " + o.customerName, o.complaint + " • " + o.createdAt + " • " + (o.laborCost + o.partsCost - o.discount) + " ر.ي", badge, bc) { showWorkOrderDetails(o.id) }
+        }
+        sectionTitle("أحدث العملاء")
+        db.getAllCustomers().take(4).forEach { c ->
+            addRowItem(c.name, c.phone + " • " + c.city + " • " + c.type) { showCustomerProfile(c.id) }
+        }
+        addOutlineAction("📊 تقرير اليوم") { showReportsPage() }
+        addOutlineAction("💾 نسخ احتياطي") { exportBackup() }
+        addOutlineAction("🚪 تسجيل الخروج") { logout() }
+    }
 
-            override fun afterTextChanged(s: Editable?) {}
+    // ==================== Customers ====================
+    private fun showCustomersPage() {
+        currentTab = "customers"
+        shell("العملاء", "إدارة عملاء الورشة وديونهم")
+        addAction("➕ إضافة عميل جديد") { showAddCustomer() }
+        addAction("🔍 بحث متقدم") { showAdvancedSearch() }
+        sectionTitle("كل العملاء")
+        val list = db.getAllCustomers()
+        if (list.isEmpty()) addMuted("لا يوجد عملاء بعد")
+        else list.forEach { c ->
+            val debtTxt = if (c.debt > 0) " • دين: " + c.debt + " ر.ي" else ""
+            addRowItem(c.name, c.phone + " • " + c.city + " • " + c.type + debtTxt) { showCustomerProfile(c.id) }
+        }
+    }
+
+    private fun showAddCustomer() {
+        if (!allowed("customers", "add")) return
+        shell("عميل جديد", "أدخل بيانات العميل كاملة")
+        val cardBox = card(); root.addView(cardBox, matchWidth())
+        val nameF = addFieldTo(cardBox, "الاسم الكامل *", "مثال: محمد أحمد")
+        val phoneF = addFieldTo(cardBox, "رقم الهاتف *", "77xxxxxxx", "phone")
+        val altF = addFieldTo(cardBox, "هاتف بديل", "اختياري", "phone")
+        val emailF = addFieldTo(cardBox, "البريد الإلكتروني", "example@email.com")
+        val cityF = addFieldTo(cardBox, "المدينة", "مثال: صنعاء / إب")
+        cardBox.addView(fieldLabel("نوع العميل"))
+        val typeSp = spinner(listOf("فرد", "شركة", "تاجر", "جهة حكومية")); cardBox.addView(typeSp, matchWidth())
+        val addrF = addFieldTo(cardBox, "العنوان", "الحي - الشارع")
+        val notesF = addFieldTo(cardBox, "ملاحظات", "ملاحظات عن العميل", "multiline")
+        // Live duplicate check
+        phoneF.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun afterTextChanged(e: Editable?) {
+                val existing = db.findCustomerByPhone(e.toString())
+                if (existing != null) toast("تنبيه: هذا الرقم مسجل باسم " + existing)
+            }
         })
-
-        dialog.show()
+        addAction("حفظ العميل") {
+            try {
+                val id = db.addCustomer(nameF.text.toString(), phoneF.text.toString(), altF.text.toString(), addrF.text.toString(), notesF.text.toString(), emailF.text.toString(), cityF.text.toString(), typeSp.selectedItem.toString())
+                toast("تم حفظ العميل"); showCustomerProfile(id)
+            } catch (e: Exception) { toast(e.message ?: "خطأ في الحفظ") }
+        }
+        addOutlineAction("إلغاء") { showCustomersPage() }
     }
 
-    // ملف السيارة
+    private fun showCustomerProfile(customerId: Long) {
+        val c = db.getCustomerProfile(customerId) ?: run { toast("العميل غير موجود"); return }
+        shell(c.name, c.type + " • " + c.city + " • " + c.phone)
+        addCard {
+            val t = TextView(this@MainActivity).apply { text = "بيانات العميل"; textSize = 16f; setTextColor(primary); typeface = Typeface.DEFAULT_BOLD }
+            addView(t)
+            val lines = listOf("📞 الهاتف: " + c.phone, "📱 بديل: " + c.alternatePhones, "✉️ إيميل: " + c.email, "📍 العنوان: " + c.address, "🏙️ المدينة: " + c.city, "📝 ملاحظات: " + c.notes)
+            lines.forEach { line -> val tv = TextView(this@MainActivity).apply { text = line; textSize = 14f; setTextColor(dark); setPadding(0, dp(4), 0, 0) }; addView(tv) }
+            val debtView = TextView(this@MainActivity).apply { text = "💰 إجمالي الدين: " + String.format("%.0f", c.debt) + " ر.ي"; textSize = 15f; setTextColor(if (c.debt > 0) danger else success); typeface = Typeface.DEFAULT_BOLD; setPadding(0, dp(10), 0, 0) }
+            addView(debtView)
+        }
+        addAction("🚗 إضافة سيارة لهذا العميل") { showAddVehicle(customerId) }
+        addAction("🛠️ أمر شغل جديد") { showAddWorkOrder(customerId) }
+        sectionTitle("سيارات العميل")
+        val vehicles = db.getAllVehicles().filter { it.customerId == customerId }
+        if (vehicles.isEmpty()) addMuted("لا توجد سيارات مسجلة")
+        else vehicles.forEach { v -> addRowItem(v.make + " " + v.model + " (" + v.year + ")", "لوحة: " + v.plate + " • VIN: " + v.vin + " • " + v.color) { showVehicleProfile(v.id) } }
+        sectionTitle("سجل زيارات العميل")
+        val orders = db.getCustomerWorkOrders(customerId)
+        if (orders.isEmpty()) addMuted("لا توجد زيارات")
+        else orders.take(10).forEach { o -> addRowItem("أمر #" + o.id + " - " + o.vehicleName, o.complaint + " • " + o.status + " • " + (o.laborCost + o.partsCost - o.discount) + " ر.ي") { showWorkOrderDetails(o.id) } }
+        if (allowed("customers", "edit")) addOutlineAction("✏️ تعديل بيانات العميل") { showEditCustomer(c) }
+        addOutlineAction("⬅️ عودة للعملاء") { showCustomersPage() }
+    }
+
+    private fun showEditCustomer(c: CustomerProfile) {
+        shell("تعديل عميل", c.name)
+        val box = card(); root.addView(box, matchWidth())
+        val nameF = addFieldTo(box, "الاسم", "الاسم"); nameF.setText(c.name)
+        val phoneF = addFieldTo(box, "الهاتف", "الهاتف", "phone"); phoneF.setText(c.phone)
+        val altF = addFieldTo(box, "هاتف بديل", "بديل", "phone"); altF.setText(c.alternatePhones)
+        val emailF = addFieldTo(box, "إيميل", "إيميل"); emailF.setText(c.email)
+        val cityF = addFieldTo(box, "مدينة", "مدينة"); cityF.setText(c.city)
+        val addrF = addFieldTo(box, "عنوان", "عنوان"); addrF.setText(c.address)
+        val notesF = addFieldTo(box, "ملاحظات", "ملاحظات", "multiline"); notesF.setText(c.notes)
+        addAction("حفظ التعديل") {
+            db.updateCustomer(c.id, nameF.text.toString(), phoneF.text.toString(), altF.text.toString(), addrF.text.toString(), notesF.text.toString(), emailF.text.toString(), cityF.text.toString(), c.type)
+            toast("تم التحديث"); showCustomerProfile(c.id)
+        }
+        addOutlineAction("إلغاء") { showCustomerProfile(c.id) }
+    }
+
+    // ==================== Vehicles ====================
+    private fun showVehiclesPage() {
+        currentTab = "vehicles"
+        shell("السيارات", "جميع السيارات المسجلة في الورشة")
+        addAction("➕ إضافة سيارة") { showAddVehicle() }
+        sectionTitle("كل السيارات")
+        val list = db.getAllVehicles()
+        if (list.isEmpty()) addMuted("لا توجد سيارات")
+        else list.forEach { v ->
+            addRowItem(v.make + " " + v.model + " (" + v.year + ")", v.ownerName + " • لوحة: " + v.plate + " • " + v.color + " • " + v.fuelType) { showVehicleProfile(v.id) }
+        }
+    }
+
+    private fun showAddVehicle(preselectedCustomer: Long = -1L) {
+        if (!allowed("vehicles", "add")) return
+        shell("سيارة جديدة", "أدخل بيانات السيارة بدقة")
+        val box = card(); root.addView(box, matchWidth())
+        val customers = db.getAllCustomers()
+        box.addView(fieldLabel("العميل *"))
+        val custNames = customers.map { it.name + " - " + it.phone }
+        val custSp = spinner(if (custNames.isEmpty()) listOf("لا يوجد عملاء - أضف عميل أولاً") else custNames)
+        if (preselectedCustomer > 0) { val idx = customers.indexOfFirst { it.id == preselectedCustomer }; if (idx >= 0) custSp.setSelection(idx) }
+        box.addView(custSp, matchWidth())
+        val makeF = addFieldTo(box, "الماركة *", "مثال: تويوتا")
+        val modelF = addFieldTo(box, "الموديل *", "مثال: كورولا")
+        val yearF = addFieldTo(box, "سنة الصنع", "2020", "number")
+        val engineF = addFieldTo(box, "المحرك", "مثال: 1.8")
+        val plateF = addFieldTo(box, "رقم اللوحة", "مثال: 12345")
+        val vinF = addFieldTo(box, "رقم الشاصي VIN", "17 حرف")
+        val odoF = addFieldTo(box, "عداد الكيلومترات", "0", "number")
+        box.addView(fieldLabel("اللون"))
+        val colorSp = spinner(listOf("أبيض", "أسود", "فضي", "رمادي", "أحمر", "أزرق", "أخضر", "ذهبي", "بني", "أخرى")); box.addView(colorSp, matchWidth())
+        box.addView(fieldLabel("نوع الوقود"))
+        val fuelSp = spinner(listOf("بنزين", "ديزل", "هجين", "كهرباء", "غاز")); box.addView(fuelSp, matchWidth())
+        box.addView(fieldLabel("ناقل الحركة"))
+        val transSp = spinner(listOf("أوتوماتيك", "عادي", "CVT")); box.addView(transSp, matchWidth())
+        val notesF = addFieldTo(box, "ملاحظات", "حالة السيارة، ملاحظات", "multiline")
+        plateF.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun afterTextChanged(e: Editable?) { val ex = db.findVehicleByPlate(e.toString()); if (ex != null) toast("تنبيه: اللوحة مسجلة: " + ex) }
+        })
+        addAction("حفظ السيارة") {
+            if (customers.isEmpty()) { toast("أضف عميل أولاً"); return@addAction }
+            try {
+                val cid = customers[custSp.selectedItemPosition].id
+                val id = db.addVehicle(cid, makeF.text.toString(), modelF.text.toString(), yearF.text.toString(), engineF.text.toString(), plateF.text.toString(), vinF.text.toString(), odoF.text.toString(), notesF.text.toString(), colorSp.selectedItem.toString(), fuelSp.selectedItem.toString(), transSp.selectedItem.toString())
+                toast("تم حفظ السيارة"); showVehicleProfile(id)
+            } catch (e: Exception) { toast(e.message ?: "خطأ") }
+        }
+        addOutlineAction("إلغاء") { showVehiclesPage() }
+    }
 
     private fun showVehicleProfile(vehicleId: Long) {
-        val vehicle = db.getVehicleProfile(vehicleId)
-        if (vehicle == null) {
-            toast("لم يتم العثور على السيارة")
-            return
-        }
-
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(8), dp(18), dp(8))
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
-
-        val title = TextView(this).apply {
-            text = "${vehicle.make} ${vehicle.model} ${vehicle.year}"
-            textSize = 21f
-            setTextColor(navy)
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding(dp(8), dp(12), dp(8), dp(12))
-        }
-        box.addView(title, matchWidth())
-
-        addInfo(box, "المالك الحالي", vehicle.ownerName)
-        addInfo(box, "رقم هاتف المالك", vehicle.ownerPhone)
-        addInfo(box, "رقم اللوحة", vehicle.plate)
-        addInfo(box, "رقم الهيكل VIN", vehicle.vin)
-        addInfo(box, "المحرك", vehicle.engine)
-        addInfo(box, "سنة الصنع", vehicle.year)
-        addInfo(box, "عداد الكيلومترات", vehicle.odometer.toString())
-        addInfo(box, "ملاحظات", vehicle.notes)
-
-        val scroll = ScrollView(this)
-        scroll.addView(box)
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("ملف السيارة")
-            .setView(scroll)
-            .setPositiveButton("إغلاق", null)
-            .setNeutralButton("سجل الملاك", null)
-            .setNegativeButton("سجل الزيارات", null)
-            .create()
-
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
-                .setOnClickListener {
-                    showOwnerHistory(vehicle.id)
-                }
-
-            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
-                .setOnClickListener {
-                    showVehicleVisits(vehicle.id)
-                }
-        }
-
-        dialog.show()
-
-        // أزرار العمليات الإضافية في ملف السيارة
-        val actions = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(5), dp(18), dp(12))
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
-
-        val actionDialog = AlertDialog.Builder(this)
-            .setTitle("عمليات السيارة")
-            .setView(actions)
-            .setNegativeButton("إغلاق", null)
-            .create()
-
-        addDialogButton(actions, "تسجيل زيارة جديدة", navy) {
-            actionDialog.dismiss()
-            newVehicleVisit(vehicle.id)
-        }
-
-        addDialogButton(actions, "نقل ملكية السيارة", gold) {
-            actionDialog.dismiss()
-            transferOwnership(vehicle.id)
-        }
-
-        addDialogButton(actions, "عرض ملف السيارة", mutedColor) {
-            actionDialog.dismiss()
-            showVehicleProfile(vehicle.id)
-        }
-
-        // فتح العمليات عند الضغط المطول على عنوان الملف
-        title.setOnLongClickListener {
-            actionDialog.show()
-            true
-        }
-
-        // زر واضح لفتح قائمة العمليات
-        val operationsButton = Button(this).apply {
-            text = "عمليات السيارة: زيارة جديدة / نقل ملكية"
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = roundedBackground(navy, 12)
-            setOnClickListener {
-                actionDialog.show()
-            }
-        }
-        box.addView(operationsButton, matchWidth())
-    }
-
-    private fun addInfo(box: LinearLayout, label: String, value: String) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = roundedBackground(Color.WHITE, 10)
-        }
-
-        val heading = TextView(this).apply {
-            text = label
-            textSize = 12f
-            setTextColor(mutedColor)
-        }
-        row.addView(heading, matchWidth())
-
-        val content = TextView(this).apply {
-            text = value.ifBlank { "غير مسجل" }
-            textSize = 15f
-            setTextColor(navy)
-            setTypeface(null, Typeface.BOLD)
-            setPadding(0, dp(3), 0, 0)
-        }
-        row.addView(content, matchWidth())
-
-        box.addView(
-            row,
-            matchWidth().apply {
-                setMargins(0, dp(3), 0, dp(3))
-            }
-        )
-    }
-
-    // سجل الملاك
-
-    private fun showOwnerHistory(vehicleId: Long) {
-        val records = db.getVehicleOwnerHistory(vehicleId)
-
-        val message = if (records.isEmpty()) {
-            "لا يوجد سجل نقل ملكية لهذه السيارة.\n\nالمالك الحالي يظهر في ملف السيارة."
-        } else {
-            records.joinToString("\n\n────────────\n\n") {
-                "من: ${it.oldOwner}\n" +
-                    "إلى: ${it.newOwner}\n" +
-                    "السبب: ${it.reason}\n" +
-                    "التاريخ: ${it.changedAt}"
-            }
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle("سجل ملاك السيارة")
-            .setMessage(message)
-            .setPositiveButton("إغلاق", null)
-            .show()
-    }
-
-    // سجل زيارات السيارة
-
-    private fun showVehicleVisits(vehicleId: Long) {
-        val records = db.getVehicleWorkOrders(vehicleId)
-
-        val message = if (records.isEmpty()) {
-            "لا توجد زيارات مسجلة لهذه السيارة."
-        } else {
-            records.joinToString("\n\n────────────\n\n") {
-                "أمر إصلاح رقم: ${it.id}\n" +
-                    "العميل وقت الزيارة: ${it.customerName}\n" +
-                    "التاريخ: ${it.createdAt}\n" +
-                    "العداد: ${it.odometer}\n" +
-                    "الشكوى: ${it.complaint}\n" +
-                    "التشخيص: ${it.diagnosis}\n" +
-                    "الإصلاح: ${it.repairNotes}\n" +
-                    "الحالة: ${it.status}\n" +
-                    "أجور العمل: ${it.laborCost}\n" +
-                    "تكلفة القطع: ${it.partsCost}"
-            }
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle("سجل زيارات السيارة")
-            .setMessage(message)
-            .setPositiveButton("إغلاق", null)
-            .show()
-    }
-
-    
-// ---------- ملف العميل ----------
-
-private fun showCustomerProfile(customerId: Long) {
-    val customer = db.getCustomerProfile(customerId)
-
-    if (customer == null) {
-        toast("لم يتم العثور على العميل")
-        return
-    }
-
-    val vehicles = db.getCustomerVehicles(customerId)
-    val visits = db.getCustomerWorkOrders(customerId)
-
-    val box = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(16), dp(8), dp(16), dp(8))
-        layoutDirection = View.LAYOUT_DIRECTION_RTL
-    }
-
-    val title = TextView(this).apply {
-        text = customer.name
-        textSize = 21f
-        setTextColor(navy)
-        setTypeface(null, Typeface.BOLD)
-        gravity = Gravity.CENTER
-        setPadding(dp(8), dp(12), dp(8), dp(12))
-    }
-    box.addView(title, matchWidth())
-
-    addInfo(box, "رقم الهاتف", customer.phone)
-    addInfo(box, "أرقام بديلة", customer.alternatePhones)
-    addInfo(box, "العنوان", customer.address)
-    addInfo(box, "ملاحظات", customer.notes)
-
-    fun addSection(text: String) {
-        val heading = TextView(this).apply {
-            this.text = text
-            textSize = 17f
-            setTextColor(navy)
-            setTypeface(null, Typeface.BOLD)
-            setPadding(0, dp(18), 0, dp(8))
-        }
-        box.addView(heading, matchWidth())
-    }
-
-    addSection("سيارات العميل (${vehicles.size})")
-
-    if (vehicles.isEmpty()) {
-        addInfo(box, "السيارات", "لا توجد سيارات مسجلة لهذا العميل")
-    } else {
-        vehicles.forEach { vehicle ->
-            val item = TextView(this).apply {
-                text = "${vehicle.make} ${vehicle.model} ${vehicle.year}\n" +
-                    "اللوحة: ${vehicle.plate.ifBlank { "غير مسجلة" }}\n" +
-                    "VIN: ${vehicle.vin}\n" +
-                    "اضغط لفتح ملف السيارة"
-                textSize = 14f
-                setTextColor(navy)
-                setPadding(dp(12), dp(14), dp(12), dp(14))
-                background = roundedBackground(Color.WHITE, 12)
-                isClickable = true
-                isFocusable = true
-
-                setOnClickListener {
-                    showVehicleProfile(vehicle.id)
-                }
-            }
-
-            box.addView(
-                item,
-                matchWidth().apply {
-                    setMargins(0, dp(4), 0, dp(4))
-                }
+        val v = db.getVehicleProfile(vehicleId) ?: run { toast("السيارة غير موجودة"); return }
+        shell(v.make + " " + v.model, v.ownerName + " • لوحة: " + v.plate)
+        addCard {
+            val t = TextView(this@MainActivity).apply { text = "بيانات السيارة"; textSize = 16f; setTextColor(primary); typeface = Typeface.DEFAULT_BOLD }
+            addView(t)
+            val lines = listOf(
+                "👤 المالك: " + v.ownerName + " (" + v.ownerPhone + ")",
+                "📅 سنة الصنع: " + v.year, "⚙️ المحرك: " + v.engine,
+                "🎨 اللون: " + v.color, "⛽ الوقود: " + v.fuelType, "🔧 القير: " + v.transmission,
+                "🔢 VIN: " + v.vin, "📍 اللوحة: " + v.plate, "🛣️ العداد: " + v.odometer + " كم",
+                "📝 ملاحظات: " + v.notes
             )
+            lines.forEach { line -> val tv = TextView(this@MainActivity).apply { text = line; textSize = 14f; setTextColor(dark); setPadding(0, dp(3), 0, 0) }; addView(tv) }
         }
-    }
-
-    addSection("سجل زيارات العميل (${visits.size})")
-
-    if (visits.isEmpty()) {
-        addInfo(box, "الزيارات", "لا توجد زيارات مسجلة لهذا العميل")
-    } else {
-        visits.forEach { visit ->
-            val item = TextView(this).apply {
-                text =
-                    "أمر إصلاح رقم: ${visit.id}\n" +
-                    "السيارة: ${visit.vehicleName}\n" +
-                    "التاريخ: ${visit.createdAt}\n" +
-                    "الشكوى: ${visit.complaint}\n" +
-                    "التشخيص: ${visit.diagnosis}\n" +
-                    "الإصلاح: ${visit.repairNotes}\n" +
-                    "الحالة: ${visit.status}\n" +
-                    "أجور العمل: ${visit.laborCost}\n" +
-                    "تكلفة القطع: ${visit.partsCost}\n\n" +
-                    "اضغط لفتح ملف السيارة"
-
-                textSize = 13f
-                setTextColor(navy)
-                setPadding(dp(12), dp(14), dp(12), dp(14))
-                background = roundedBackground(Color.WHITE, 12)
-                isClickable = true
-                isFocusable = true
-
-                setOnClickListener {
-                    if (visit.vehicleId > 0L) {
-                        showVehicleProfile(visit.vehicleId)
-                    }
-                }
+        sectionTitle("صور السيارة", "➕ إضافة صورة") {
+            pendingPhotoVehicleId = vehicleId
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "image/*"; addCategory(Intent.CATEGORY_OPENABLE) }
+            startActivityForResult(intent, PICK_PHOTO)
+        }
+        val photos = db.getVehiclePhotos(vehicleId)
+        if (photos.isEmpty()) addMuted("لا توجد صور - أضف صورة للتوثيق")
+        else photos.forEach { ph ->
+            addRowItem("صورة - " + ph.createdAt, ph.uri.take(60)) {
+                try { val iv = Intent(Intent.ACTION_VIEW).apply { setDataAndType(Uri.parse(ph.uri), "image/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }; startActivity(iv) } catch (e: Exception) { toast("تعذر فتح الصورة") }
             }
+        }
+        addAction("🛠️ أمر شغل جديد لهذه السيارة") { showAddWorkOrder(v.customerId, vehicleId) }
+        addOutlineAction("🔄 نقل ملكية") { showTransferOwnership(vehicleId) }
+        sectionTitle("سجل زيارات السيارة")
+        val orders = db.getVehicleWorkOrders(vehicleId)
+        if (orders.isEmpty()) addMuted("لا توجد زيارات")
+        else orders.forEach { o -> addRowItem("أمر #" + o.id + " - " + o.status, o.complaint + " • " + o.createdAt + " • " + (o.laborCost + o.partsCost - o.discount) + " ر.ي") { showWorkOrderDetails(o.id) } }
+        sectionTitle("سجل الملكية")
+        val hist = db.getVehicleOwnerHistory(vehicleId)
+        if (hist.isEmpty()) addMuted("لا توجد عمليات نقل ملكية")
+        else hist.forEach { h -> addRowItem("من " + h.oldOwner + " إلى " + h.newOwner, h.reason + " • " + h.changedAt) {} }
+        addOutlineAction("⬅️ عودة للسيارات") { showVehiclesPage() }
+    }
 
-            box.addView(
-                item,
-                matchWidth().apply {
-                    setMargins(0, dp(4), 0, dp(4))
-                }
-            )
+    private fun showTransferOwnership(vehicleId: Long) {
+        val customers = db.getAllCustomers()
+        AlertDialog.Builder(this).setTitle("نقل ملكية").setMessage("اختر المالك الجديد").setItems(customers.map { it.name + " - " + it.phone }.toTypedArray()) { _, idx ->
+            val reasonF = field("سبب النقل", "multiline")
+            AlertDialog.Builder(this).setTitle("سبب النقل").setView(reasonF).setPositiveButton("تأكيد") { _, _ ->
+                db.transferOwnership(vehicleId, customers[idx].id, reasonF.text.toString()); toast("تم نقل الملكية"); showVehicleProfile(vehicleId)
+            }.setNegativeButton("إلغاء", null).show()
+        }.setNegativeButton("إلغاء", null).show()
+    }
+
+    // ==================== Work Orders ====================
+    private fun showWorkOrdersPage() {
+        currentTab = "orders"
+        shell("أوامر الشغل", "متابعة الإصلاحات والحالات والدفعات")
+        addAction("➕ أمر شغل جديد") { showAddWorkOrder() }
+        // Filter chips
+        val filters = listOf("الكل", "مفتوح", "قيد الإصلاح", "مكتمل")
+        val chipRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        filters.forEach { f ->
+            val chip = TextView(this).apply { text = f; textSize = 13f; setTextColor(if (f == "الكل") Color.WHITE else primary); setPadding(dp(14), dp(8), dp(14), dp(8)); background = rounded(if (f == "الكل") tealDark else Color.WHITE, 20, 1, border); setOnClickListener { showFilteredOrders(f) } }
+            chipRow.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(8) })
+        }
+        root.addView(chipRow, matchWidth().apply { setMargins(0, dp(4), 0, dp(12)) })
+        sectionTitle("أحدث الأوامر")
+        val list = db.getAllWorkOrders()
+        if (list.isEmpty()) addMuted("لا توجد أوامر")
+        else list.take(30).forEach { o ->
+            val bc = if (o.status == "مكتمل") success else if (o.status == "مفتوح") warning else tealDark
+            addRowItem("أمر #" + o.id + " - " + o.customerName, o.complaint + " • فني: " + o.technician + " • أولوية: " + o.priority + " • " + (o.laborCost + o.partsCost - o.discount) + " ر.ي", o.status, bc) { showWorkOrderDetails(o.id) }
         }
     }
 
-    val scroll = ScrollView(this)
-    scroll.addView(box)
+    private fun showFilteredOrders(status: String) {
+        shell("أوامر - " + status, "تصفية حسب الحالة")
+        val list = if (status == "الكل") db.getAllWorkOrders() else db.getAllWorkOrders().filter { it.status == status }
+        if (list.isEmpty()) addMuted("لا توجد أوامر بهذه الحالة")
+        else list.forEach { o -> addRowItem("أمر #" + o.id + " - " + o.customerName, o.complaint + " • " + o.createdAt) { showWorkOrderDetails(o.id) } }
+        addOutlineAction("عرض الكل") { showWorkOrdersPage() }
+    }
 
-    AlertDialog.Builder(this)
-        .setTitle("ملف العميل")
-        .setView(scroll)
-        .setPositiveButton("إغلاق", null)
-        .show()
-}
-
-
-    // تسجيل زيارة من ملف السيارة مباشرة
-
-    private fun newVehicleVisit(vehicleId: Long) {
-        val vehicle = db.getVehicleProfile(vehicleId) ?: return
-
-        val odo = field("قراءة العداد عند الزيارة", type = "number")
-        odo.setText(vehicle.odometer.toString())
-
-        val complaint = field("شكوى العميل")
-        val diagnosis = field("التشخيص الفني الأولي")
-        val repair = field("تفاصيل الإصلاح المنفذ")
-
-        val statuses = arrayOf("مفتوح", "قيد العمل", "مكتمل")
-
-        val status = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                statuses
-            )
-        }
-
-        val labor = field("أجور العمل", type = "decimal")
-        val parts = field("تكلفة قطع الغيار", type = "decimal")
-
-        formDialog(
-            "زيارة جديدة — ${vehicle.make} ${vehicle.model}",
-            listOf(odo, complaint, diagnosis, repair, status, labor, parts)
-        ) { dialog ->
+    private fun showAddWorkOrder(preCustomer: Long = -1L, preVehicle: Long = -1L) {
+        if (!allowed("work_orders", "add")) return
+        shell("أمر شغل جديد", "سجل الشكوى والتشخيص والإصلاح")
+        val box = card(); root.addView(box, matchWidth())
+        val customers = db.getAllCustomers(); val vehicles = db.getAllVehicles()
+        box.addView(fieldLabel("العميل"))
+        val custSp = spinner(if (customers.isEmpty()) listOf("أضف عميل أولاً") else customers.map { it.name + " - " + it.phone })
+        if (preCustomer > 0) { val idx = customers.indexOfFirst { it.id == preCustomer }; if (idx >= 0) custSp.setSelection(idx) }
+        box.addView(custSp, matchWidth())
+        box.addView(fieldLabel("السيارة"))
+        val vehSp = spinner(if (vehicles.isEmpty()) listOf("أضف سيارة أولاً") else vehicles.map { it.make + " " + it.model + " - " + it.plate })
+        if (preVehicle > 0) { val idx = vehicles.indexOfFirst { it.id == preVehicle }; if (idx >= 0) vehSp.setSelection(idx) }
+        box.addView(vehSp, matchWidth())
+        val odoF = addFieldTo(box, "عداد الكيلومترات", "العداد الحالي", "number")
+        val complaintF = addFieldTo(box, "شكوى العميل *", "ماذا يشتكي العميل؟", "multiline")
+        val diagF = addFieldTo(box, "التشخيص", "تشخيص الفني", "multiline")
+        val repairF = addFieldTo(box, "ملاحظات الإصلاح", "ما تم إصلاحه", "multiline")
+        box.addView(fieldLabel("الأولوية"))
+        val priSp = spinner(listOf("عادية", "مستعجلة", "عاجلة جداً")); box.addView(priSp, matchWidth())
+        val techF = addFieldTo(box, "اسم الفني", "مثال: أحمد")
+        val laborF = addFieldTo(box, "أجور العمل", "0", "decimal")
+        val partsF = addFieldTo(box, "تكلفة القطع", "0", "decimal")
+        val discF = addFieldTo(box, "الخصم", "0", "decimal")
+        val expectedF = addFieldTo(box, "تاريخ التسليم المتوقع", "2026-11-25")
+        box.addView(fieldLabel("الحالة"))
+        val statusSp = spinner(listOf("مفتوح", "قيد الإصلاح", "بانتظار قطع", "مكتمل", "مغلق")); box.addView(statusSp, matchWidth())
+        val payF = addFieldTo(box, "دفعة مقدمة (اختياري)", "0", "decimal")
+        addAction("حفظ أمر الشغل") {
+            if (customers.isEmpty() || vehicles.isEmpty()) { toast("أضف عميل وسيارة أولاً"); return@addAction }
             try {
-                db.addWorkOrder(
-                    vehicle.customerId,
-                    vehicle.id,
-                    odo.text.toString(),
-                    complaint.text.toString(),
-                    diagnosis.text.toString(),
-                    repair.text.toString(),
-                    status.selectedItem.toString(),
-                    labor.text.toString(),
-                    parts.text.toString()
-                )
-
-                dialog.dismiss()
-                activeFormDialog = null
-                toast("تم تسجيل الزيارة بنجاح")
-                showVehicleProfile(vehicle.id)
-            } catch (_: Exception) {
-                toast("تعذر الحفظ، تحقق من قراءة العداد والتكاليف")
-            }
+                val cid = customers[custSp.selectedItemPosition].id; val vid = vehicles[vehSp.selectedItemPosition].id
+                val id = db.addWorkOrder(cid, vid, odoF.text.toString().toLongOrNull() ?: 0L, complaintF.text.toString(), diagF.text.toString(), repairF.text.toString(), statusSp.selectedItem.toString(), laborF.text.toString().toDoubleOrNull() ?: 0.0, partsF.text.toString().toDoubleOrNull() ?: 0.0, priSp.selectedItem.toString(), techF.text.toString(), discF.text.toString().toDoubleOrNull() ?: 0.0, expectedF.text.toString())
+                val advance = payF.text.toString().toDoubleOrNull() ?: 0.0
+                if (advance > 0) db.addPayment(id, advance, "نقدي", "دفعة مقدمة")
+                toast("تم حفظ أمر الشغل"); showWorkOrderDetails(id)
+            } catch (e: Exception) { toast(e.message ?: "خطأ") }
         }
+        addOutlineAction("إلغاء") { showWorkOrdersPage() }
     }
 
-
-    // نقل الملكية مع حفظ المالك السابق
-
-    private fun transferOwnership(vehicleId: Long) {
-        val vehicle = db.getVehicleProfile(vehicleId) ?: return
-        val customers = db.customerOptions()
-
-        if (customers.isEmpty()) {
-            return toast("لا يوجد عملاء مسجلون")
-        }
-
-        val owner = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                customers.map { it.second }
+    private fun showWorkOrderDetails(orderId: Long) {
+        val o = db.getWorkOrderById(orderId) ?: run { toast("الأمر غير موجود"); return }
+        val (paid, remaining) = db.getWorkOrderBalance(orderId)
+        val total = o.laborCost + o.partsCost - o.discount
+        shell("أمر الشغل #" + o.id, "العميل: " + o.customerName + " • الحالة: " + o.status)
+        addCard {
+            val t = TextView(this@MainActivity).apply { text = "تفاصيل الأمر"; textSize = 16f; setTextColor(primary); typeface = Typeface.DEFAULT_BOLD }
+            addView(t)
+            val lines = listOf(
+                "📝 الشكوى: " + o.complaint, "🔍 التشخيص: " + o.diagnosis, "🔧 الإصلاح: " + o.repairNotes,
+                "👨‍🔧 الفني: " + o.technician, "⚡ الأولوية: " + o.priority, "📅 التسليم المتوقع: " + o.expectedDate,
+                "🛣️ العداد: " + o.odometer + " كم", "📅 التاريخ: " + o.createdAt
             )
+            lines.forEach { line -> val tv = TextView(this@MainActivity).apply { text = line; textSize = 14f; setTextColor(dark); setPadding(0, dp(3), 0, 0) }; addView(tv) }
         }
-
-        val reason = field("سبب نقل الملكية، اختياري")
-
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), dp(8))
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
-
-        val current = TextView(this).apply {
-            text = "المالك الحالي: ${vehicle.ownerName}"
-            textSize = 15f
-            setTextColor(navy)
-            setPadding(0, 0, 0, dp(12))
-        }
-
-        box.addView(current, matchWidth())
-        box.addView(owner, matchWidth())
-        box.addView(reason, matchWidth())
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("نقل ملكية السيارة")
-            .setView(box)
-            .setPositiveButton("تأكيد النقل", null)
-            .setNegativeButton("إلغاء", null)
-            .create()
-
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val selected = customers[owner.selectedItemPosition]
-
-                if (selected.first == vehicle.customerId) {
-                    toast("هذا العميل هو المالك الحالي بالفعل")
-                    return@setOnClickListener
-                }
-
-                val changed = db.transferVehicleOwnership(
-                    vehicle.id,
-                    selected.first,
-                    reason.text.toString()
-                )
-
-                if (changed) {
-                    dialog.dismiss()
-                    toast("تم نقل الملكية وحفظ سجل المالك السابق")
-                    showVehicleProfile(vehicle.id)
-                } else {
-                    toast("تعذر نقل الملكية، لم يتم تغيير البيانات")
-                }
-            }
-        }
-
-        dialog.show()
-    }
-
-    private fun addDialogButton(
-        box: LinearLayout,
-        label: String,
-        color: Int,
-        action: () -> Unit
-    ) {
-        val button = Button(this).apply {
-            text = label
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = roundedBackground(color, 12)
-            setOnClickListener { action() }
-        }
-
-        box.addView(
-            button,
-            matchWidth().apply {
-                setMargins(0, dp(5), 0, dp(5))
-            }
-        )
-    }
-
-    // السجلات العامة
-
-    private fun recordsDialog() {
-        val labels = arrayOf("العملاء", "السيارات", "أوامر الإصلاح", "المخزون")
-        val tables = arrayOf("customers", "vehicles", "work_orders", "parts")
-
-        AlertDialog.Builder(this)
-            .setTitle("سجلات الورشة")
-            .setItems(labels) { _, which ->
-                showRecords(labels[which], tables[which])
-            }
-            .setNegativeButton("إغلاق", null)
-            .show()
-    }
-
-    
-
-fun showRecords(label: String, table: String) {
-    if (table != "customers" &&
-        table != "vehicles" &&
-        table != "work_orders"
-    ) {
-        val rows = db.recentRows(table)
-
-        val message = if (rows.isEmpty()) {
-            "لا توجد سجلات بعد"
-        } else {
-            rows.joinToString("\n\n────────────\n\n")
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle(label)
-            .setMessage(message)
-            .setPositiveButton("إغلاق", null)
-            .show()
-        return
-    }
-
-    val records = db.recentClickableRecords(table)
-
-    if (records.isEmpty()) {
-        AlertDialog.Builder(this)
-            .setTitle(label)
-            .setMessage("لا توجد سجلات بعد")
-            .setPositiveButton("إغلاق", null)
-            .show()
-        return
-    }
-
-    val listView = ListView(this).apply {
-        layoutDirection = View.LAYOUT_DIRECTION_RTL
-
-        adapter = object : android.widget.BaseAdapter() {
-            override fun getCount() = records.size
-
-            override fun getItem(position: Int) = records[position]
-
-            override fun getItemId(position: Int) =
-                records[position].id
-
-            override fun getView(
-                position: Int,
-                convertView: View?,
-                parent: android.view.ViewGroup?
-            ): View {
-                val item = records[position]
-
-                val container = LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(
-                        dp(16), dp(12),
-                        dp(16), dp(12)
-                    )
-                    layoutDirection = View.LAYOUT_DIRECTION_RTL
-                }
-
-                val titleView = TextView(this@MainActivity).apply {
-                    text = item.title
-                    textSize = 16f
-                    setTypeface(null, android.graphics.Typeface.BOLD)
-                }
-
-                val subtitleView = TextView(this@MainActivity).apply {
-                    text = item.subtitle
-                    textSize = 13f
-                    setPadding(0, dp(5), 0, 0)
-                }
-
-                container.addView(titleView)
-                container.addView(subtitleView)
-
-                return container
-            }
-        }
-
-        setOnItemClickListener { _, _, position, _ ->
-            val item = records[position]
-
-            if (table == "customers") {
-                showCustomerProfile(item.id)
-                return@setOnItemClickListener
-            }
-
-            val vehicleId = if (table == "vehicles") {
-                item.id
-            } else {
-                item.vehicleId
-            }
-
-            if (vehicleId > 0L) {
-                showVehicleProfile(vehicleId)
-            } else {
-                toast("لم يتم العثور على السيارة المرتبطة بهذا الأمر")
-            }
-        }
-    }
-
-    AlertDialog.Builder(this)
-        .setTitle(label)
-        .setView(listView)
-        .setPositiveButton("إغلاق", null)
-        .show()
-}
-
-
-
-    // نافذة الإدخال
-
-    private fun formDialog(
-        title: String,
-        views: List<View>,
-        save: (AlertDialog) -> Unit
-    ) {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(5), dp(20), dp(5))
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
-
-        views.forEach { view ->
-            box.addView(view, matchWidth())
-        }
-
-        val scroller = ScrollView(this)
-        scroller.addView(box)
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(title)
-            .setView(scroller)
-            .setPositiveButton("حفظ", null)
-            .setNegativeButton("إلغاء", null)
-            .create()
-
-        activeFormDialog = dialog
-
-        dialog.setOnDismissListener {
-            if (activeFormDialog === dialog) {
-                activeFormDialog = null
-            }
-        }
-
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-                .setOnClickListener {
-                    save(dialog)
-                }
-        }
-
-        dialog.show()
-    }
-
-    private fun done(dialog: AlertDialog) {
-        dialog.dismiss()
-
-        if (activeFormDialog === dialog) {
-            activeFormDialog = null
-        }
-
-        toast("تم الحفظ بنجاح")
-        showDashboard()
-    }
-
-    // حقول الإدخال والاقتراحات
-
-    private fun field(
-        hintText: String,
-        type: String = "text",
-        suggestionKey: String? = null
-    ): AutoCompleteTextView {
-
-        val input = AutoCompleteTextView(this).apply {
-            hint = hintText
-            textSize = 15f
-
-            
-setSingleLine(
-    type == "phone" ||
-        type == "number" ||
-        type == "decimal" ||
-        hintText.contains("السنة") ||
-        hintText.contains("العداد")
-)
-
-if (type == "phone") {
-    inputType = InputType.TYPE_CLASS_PHONE
-}
-
-if (type == "number") {
-    inputType = InputType.TYPE_CLASS_NUMBER
-}
-
-if (type == "decimal") {
-    inputType = InputType.TYPE_CLASS_NUMBER or
-        InputType.TYPE_NUMBER_FLAG_DECIMAL
-}
-
-if (type == "password") {
-    inputType = InputType.TYPE_CLASS_TEXT or
-        InputType.TYPE_TEXT_VARIATION_PASSWORD
-}
-
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            threshold = 1
-        }
-
-        if (suggestionKey != null) {
-            val adapter = ArrayAdapter<String>(
-                this,
-                android.R.layout.simple_dropdown_item_1line,
-                mutableListOf()
+        addCard {
+            val t = TextView(this@MainActivity).apply { text = "💰 الحساب"; textSize = 16f; setTextColor(primary); typeface = Typeface.DEFAULT_BOLD }
+            addView(t)
+            val rows = listOf(
+                "أجور العمل: " + o.laborCost + " ر.ي", "تكلفة القطع: " + o.partsCost + " ر.ي",
+                "الخصم: -" + o.discount + " ر.ي", "الإجمالي: " + total + " ر.ي",
+                "المدفوع: " + paid + " ر.ي", "المتبقي: " + remaining + " ر.ي"
             )
-
-            input.setAdapter(adapter)
-
-            input.addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(
-                    s: CharSequence?,
-                    start: Int,
-                    count: Int,
-                    after: Int
-                ) {}
-
-                override fun onTextChanged(
-                    s: CharSequence?,
-                    start: Int,
-                    before: Int,
-                    count: Int
-                ) {
-                    val prefix = s?.toString().orEmpty()
-
-                    if (prefix.isBlank()) {
-                        adapter.clear()
-                        input.dismissDropDown()
-                        return
-                    }
-
-                    val results = db.suggestions(suggestionKey, prefix)
-
-                    adapter.clear()
-                    adapter.addAll(results)
-                    adapter.notifyDataSetChanged()
-
-                    if (results.isNotEmpty() && input.hasFocus()) {
-                        input.showDropDown()
-                    } else {
-                        input.dismissDropDown()
-                    }
-                }
-
-                override fun afterTextChanged(s: Editable?) {}
-            })
-        }
-
-        return input
-    }
-
-    // عناصر التصميم
-
-    private fun addAction(
-        label: String,
-        color: Int,
-        action: () -> Unit
-    ) {
-        val button = Button(this).apply {
-            text = label
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            isAllCaps = false
-            background = roundedBackground(color, 12)
-            setPadding(dp(10), dp(7), dp(10), dp(7))
-            setOnClickListener { action() }
-        }
-
-        root.addView(
-            button,
-            matchWidth().apply {
-                setMargins(0, dp(6), 0, dp(6))
+            rows.forEach { line ->
+                val tv = TextView(this@MainActivity).apply { text = line; textSize = 14f; setTextColor(if (line.startsWith("المتبقي")) danger else dark); typeface = if (line.startsWith("الإجمالي") || line.startsWith("المتبقي")) Typeface.DEFAULT_BOLD else Typeface.DEFAULT; setPadding(0, dp(3), 0, 0) }
+                addView(tv)
             }
-        )
+            // Progress
+            val pct = if (total > 0) ((paid / total) * 100).toInt().coerceIn(0, 100) else 0
+            val barBg = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; background = rounded(Color.rgb(226,232,240), 20); setPadding(0, 0, 0, 0) }
+            val barFill = View(this@MainActivity).apply { setBackgroundColor(if (remaining == 0.0) success else teal); layoutParams = LinearLayout.LayoutParams(0, dp(10), pct.toFloat()) }
+            barBg.addView(barFill)
+            addView(TextView(this@MainActivity).apply { text = "نسبة الدفع: " + pct + "%"; textSize = 12f; setTextColor(muted); setPadding(0, dp(10), 0, dp(4)) })
+            addView(barBg, matchWidth())
+        }
+        sectionTitle("الدفعات")
+        val pays = db.getPayments(orderId)
+        if (pays.isEmpty()) addMuted("لا توجد دفعات بعد")
+        else pays.forEach { p -> addRowItem(p.amount.toString() + " ر.ي - " + p.method, p.note + " • " + p.createdAt) {} }
+        if (remaining > 0) {
+            addAction("💵 إضافة دفعة") {
+                val amtF = field("المبلغ", "decimal"); val methodSp = spinner(listOf("نقدي", "تحويل", "بطاقة", "آجل")); val noteF = field("ملاحظة")
+                val dlgBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)) }
+                dlgBox.addView(fieldLabel("المبلغ")); dlgBox.addView(amtF, matchWidth())
+                dlgBox.addView(fieldLabel("طريقة الدفع")); dlgBox.addView(methodSp, matchWidth())
+                dlgBox.addView(fieldLabel("ملاحظة")); dlgBox.addView(noteF, matchWidth())
+                AlertDialog.Builder(this).setTitle("دفعة جديدة - المتبقي " + remaining).setView(dlgBox).setPositiveButton("حفظ") { _, _ ->
+                    val amt = amtF.text.toString().toDoubleOrNull() ?: 0.0
+                    if (amt <= 0) toast("أدخل مبلغ صحيح") else { db.addPayment(orderId, amt, methodSp.selectedItem.toString(), noteF.text.toString()); toast("تم تسجيل الدفعة"); showWorkOrderDetails(orderId) }
+                }.setNegativeButton("إلغاء", null).show()
+            }
+        }
+        addAction("🖨️ طباعة / مشاركة الفاتورة") { shareInvoice(orderId) }
+        addOutlineAction("🔄 تغيير الحالة") {
+            AlertDialog.Builder(this).setTitle("تغيير حالة الأمر").setItems(arrayOf("مفتوح", "قيد الإصلاح", "بانتظار قطع", "مكتمل", "مغلق")) { _, idx ->
+                val statuses = arrayOf("مفتوح", "قيد الإصلاح", "بانتظار قطع", "مكتمل", "مغلق")
+                db.updateWorkOrderStatus(orderId, statuses[idx]); toast("تم تحديث الحالة"); showWorkOrderDetails(orderId)
+            }.setNegativeButton("إلغاء", null).show()
+        }
+        addOutlineAction("⬅️ عودة للأوامر") { showWorkOrdersPage() }
     }
 
-    private fun roundedBackground(
-        color: Int,
-        radius: Int
-    ): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(color)
-            cornerRadius = dp(radius).toFloat()
+    private fun shareInvoice(orderId: Long) {
+        val o = db.getWorkOrderById(orderId) ?: return
+        val (paid, remaining) = db.getWorkOrderBalance(orderId)
+        val total = o.laborCost + o.partsCost - o.discount
+        val invoice = """
+            ========================
+            🧾 فاتورة ورشة خبارة
+            ========================
+            رقم الأمر: #$orderId
+            العميل: ${o.customerName}
+            التاريخ: ${o.createdAt}
+            ------------------------
+            الشكوى: ${o.complaint}
+            التشخيص: ${o.diagnosis}
+            الإصلاح: ${o.repairNotes}
+            الفني: ${o.technician}
+            ------------------------
+            أجور العمل: ${o.laborCost} ر.ي
+            قطع الغيار: ${o.partsCost} ر.ي
+            الخصم: -${o.discount} ر.ي
+            الإجمالي: $total ر.ي
+            المدفوع: $paid ر.ي
+            المتبقي: $remaining ر.ي
+            ------------------------
+            شكراً لثقتكم بنا ❤️
+            ورشة خبارة - صنعاء
+        """.trimIndent()
+        val intent = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, invoice); putExtra(Intent.EXTRA_SUBJECT, "فاتورة أمر #$orderId") }
+        startActivity(Intent.createChooser(intent, "مشاركة الفاتورة"))
+    }
+
+    // ==================== Parts / Inventory ====================
+    private fun showPartsPage() {
+        currentTab = "parts"
+        shell("المخزون وقطع الغيار", "تابع الكميات ونقص المخزون")
+        addAction("➕ إضافة قطعة جديدة") { showAddPart() }
+        val low = db.getLowStockParts()
+        if (low.isNotEmpty()) {
+            sectionTitle("⚠️ قطع تحتاج إعادة طلب (" + low.size + ")")
+            low.forEach { p -> addRowItem("⚠️ " + p.name, "المتبقي: " + p.quantity + " " + p.unit + " • الحد: " + p.minQuantity + " • رف: " + p.shelf, "ناقص", danger) { showPartDetails(p) } }
+        }
+        sectionTitle("كل القطع")
+        val list = db.getAllParts()
+        if (list.isEmpty()) addMuted("المخزون فارغ")
+        else list.forEach { p ->
+            val badge = if (p.quantity <= p.minQuantity) "ناقص" else p.quantity.toString() + " " + p.unit
+            val bc = if (p.quantity <= p.minQuantity) danger else success
+            addRowItem(p.name, "رقم: " + p.partNumber + " • باركود: " + p.barcode + " • سعر: " + p.salePrice + " ر.ي • مورد: " + p.supplier + " • رف: " + p.shelf, badge, bc) { showPartDetails(p) }
         }
     }
 
-    private fun weightedParams(): LinearLayout.LayoutParams {
-        return LinearLayout.LayoutParams(
-            0,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            1f
-        ).apply {
-            setMargins(dp(5), dp(5), dp(5), dp(5))
+    private fun showAddPart() {
+        if (!allowed("parts", "add")) return
+        shell("قطعة جديدة", "أضف قطعة للمخزون")
+        val box = card(); root.addView(box, matchWidth())
+        val numF = addFieldTo(box, "رقم القطعة", "مثال: P-123")
+        val nameF = addFieldTo(box, "اسم القطعة *", "مثال: فلتر زيت")
+        val qtyF = addFieldTo(box, "الكمية", "0", "decimal")
+        box.addView(fieldLabel("الوحدة"))
+        val unitSp = spinner(listOf("قطعة", "علبة", "لتر", "متر", "طقم", "كيس")); box.addView(unitSp, matchWidth())
+        val purchF = addFieldTo(box, "سعر الشراء", "0", "decimal")
+        val saleF = addFieldTo(box, "سعر البيع", "0", "decimal")
+        val minF = addFieldTo(box, "الحد الأدنى للتنبيه", "مثال: 5", "decimal")
+        val suppF = addFieldTo(box, "المورد", "اسم المورد")
+        val shelfF = addFieldTo(box, "رقم الرف", "مثال: A-1")
+        val barF = addFieldTo(box, "الباركود", "امسح أو أدخل الباركود")
+        numF.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun afterTextChanged(e: Editable?) { val ex = db.findPartByNumber(e.toString()); if (ex != null) toast("تنبيه: الرقم مسجل: " + ex) }
+        })
+        addAction("حفظ القطعة") {
+            try {
+                db.addPart(numF.text.toString(), nameF.text.toString(), qtyF.text.toString().toDoubleOrNull() ?: 0.0, unitSp.selectedItem.toString(), purchF.text.toString().toDoubleOrNull() ?: 0.0, saleF.text.toString().toDoubleOrNull() ?: 0.0, minF.text.toString().toDoubleOrNull() ?: 0.0, suppF.text.toString(), shelfF.text.toString(), barF.text.toString())
+                toast("تم حفظ القطعة"); showPartsPage()
+            } catch (e: Exception) { toast(e.message ?: "خطأ") }
         }
+        addOutlineAction("إلغاء") { showPartsPage() }
     }
 
-    private fun matchWidth() = LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT,
-        ViewGroup.LayoutParams.WRAP_CONTENT
-    )
-
-    private fun dp(value: Int): Int {
-        return (value * resources.displayMetrics.density).toInt()
+    private fun showPartDetails(p: PartItem) {
+        shell(p.name, "رقم: " + p.partNumber + " • باركود: " + p.barcode)
+        addCard {
+            val t = TextView(this@MainActivity).apply { text = "بيانات القطعة"; textSize = 16f; setTextColor(primary); typeface = Typeface.DEFAULT_BOLD }
+            addView(t)
+            val lines = listOf(
+                "📦 الكمية: " + p.quantity + " " + p.unit,
+                "💰 سعر الشراء: " + p.purchasePrice + " ر.ي • سعر البيع: " + p.salePrice + " ر.ي",
+                "⚠️ الحد الأدنى: " + p.minQuantity + " " + p.unit,
+                "🏭 المورد: " + p.supplier, "🗄️ الرف: " + p.shelf, "🔖 الباركود: " + p.barcode
+            )
+            lines.forEach { line -> val tv = TextView(this@MainActivity).apply { text = line; textSize = 14f; setTextColor(dark); setPadding(0, dp(3), 0, 0) }; addView(tv) }
+            if (p.quantity <= p.minQuantity) {
+                val warn = TextView(this@MainActivity).apply { text = "⚠️ تنبيه: وصلت للحد الأدنى - أعد الطلب"; textSize = 14f; setTextColor(danger); typeface = Typeface.DEFAULT_BOLD; setPadding(0, dp(10), 0, 0) }
+                addView(warn)
+            }
+        }
+        addAction("➕ إضافة كمية") {
+            val qF = field("الكمية المضافة", "decimal")
+            AlertDialog.Builder(this).setTitle("إضافة كمية").setView(qF).setPositiveButton("إضافة") { _, _ ->
+                val q = qF.text.toString().toDoubleOrNull() ?: 0.0
+                db.adjustPartStock(p.id, q); toast("تمت الإضافة"); showPartsPage()
+            }.setNegativeButton("إلغاء", null).show()
+        }
+        addOutlineAction("➖ خصم كمية (بيع / استخدام)") {
+            val qF = field("الكمية", "decimal")
+            AlertDialog.Builder(this).setTitle("خصم كمية").setView(qF).setPositiveButton("خصم") { _, _ ->
+                val q = qF.text.toString().toDoubleOrNull() ?: 0.0
+                db.adjustPartStock(p.id, -q); toast("تم الخصم"); showPartsPage()
+            }.setNegativeButton("إلغاء", null).show()
+        }
+        addOutlineAction("⬅️ عودة للمخزون") { showPartsPage() }
     }
 
-    private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    // ==================== Reports ====================
+    private fun showReportsPage() {
+        shell("التقارير", "تقرير اليوم والإيرادات والديون")
+        val today = db.getDailyReport("")
+        addCard {
+            val t = TextView(this@MainActivity).apply { text = "📊 تقرير اليوم"; textSize = 17f; setTextColor(primary); typeface = Typeface.DEFAULT_BOLD }
+            addView(t)
+            val lines = listOf(
+                "أوامر اليوم: " + today.ordersCount, "أوامر مكتملة: " + today.completedCount,
+                "إجمالي الإيراد: " + String.format("%.0f", today.revenue) + " ر.ي",
+                "أجور العمل: " + String.format("%.0f", today.laborTotal) + " ر.ي",
+                "قطع الغيار: " + String.format("%.0f", today.partsTotal) + " ر.ي",
+                "مدفوعات اليوم: " + String.format("%.0f", today.paymentsReceived) + " ر.ي",
+                "إجمالي الديون المتبقية: " + String.format("%.0f", today.debtRemaining) + " ر.ي"
+            )
+            lines.forEach { line -> val tv = TextView(this@MainActivity).apply { text = line; textSize = 14f; setTextColor(dark); setPadding(0, dp(4), 0, 0) }; addView(tv) }
+        }
+        addCard {
+            val t = TextView(this@MainActivity).apply { text = "🔍 تقرير تاريخ معين"; textSize = 15f; setTextColor(primary); typeface = Typeface.DEFAULT_BOLD }
+            addView(t)
+            val dateF = field("YYYY-MM-DD", "text"); dateF.setText("2026-11-22")
+            addView(fieldLabel("التاريخ (YYYY-MM-DD)")); addView(dateF, matchWidth())
+            val btn = Button(this@MainActivity).apply { text = "عرض التقرير"; setTextColor(Color.WHITE); background = rounded(tealDark, 12); setOnClickListener {
+                val rep = db.getDailyReport(dateF.text.toString().trim())
+                showMessage("تقرير " + dateF.text.toString(), "أوامر: " + rep.ordersCount + "\nمكتملة: " + rep.completedCount + "\nإيراد: " + rep.revenue + " ر.ي\nمدفوعات: " + rep.paymentsReceived + " ر.ي")
+            } }
+            addView(btn, matchWidth().apply { setMargins(0, dp(10), 0, 0) })
+        }
+        sectionTitle("أكبر الديون")
+        val debtors = db.getAllCustomers().map { it to db.getCustomerDebt(it.id) }.filter { it.second > 0 }.sortedByDescending { it.second }.take(5)
+        if (debtors.isEmpty()) addMuted("لا توجد ديون مستحقة - ممتاز!")
+        else debtors.forEach { (c, d) -> addRowItem(c.name, c.phone, String.format("%.0f", d) + " ر.ي", danger) { showCustomerProfile(c.id) } }
+        addOutlineAction("💾 تصدير نسخة احتياطية") { exportBackup() }
+        addOutlineAction("⬅️ عودة") { showDashboard() }
+    }
+
+    // ==================== Search ====================
+    private fun showAdvancedSearch() {
+        shell("بحث متقدم", "ابحث في العملاء والسيارات والأوامر والقطع")
+        addCard {
+            val qF = field("اكتب كلمة البحث...")
+            addView(fieldLabel("كلمة البحث")); addView(qF, matchWidth())
+            addView(fieldLabel("التصنيف"))
+            val filterSp = spinner(listOf("الكل", "عملاء", "سيارات", "أوامر", "قطع")); addView(filterSp, matchWidth())
+            val btn = Button(this@MainActivity).apply { text = "بحث"; setTextColor(Color.WHITE); background = rounded(tealDark, 12); setOnClickListener { showSearchResults(qF.text.toString(), filterSp.selectedItem.toString()) } }
+            addView(btn, matchWidth().apply { setMargins(0, dp(12), 0, 0) })
+        }
+        addOutlineAction("⬅️ عودة") { showDashboard() }
+    }
+
+    private fun showSearchResults(query: String, filter: String = "الكل") {
+        shell("نتائج البحث: " + query, "التصنيف: " + filter)
+        val results = db.searchAdvanced(query, filter)
+        if (results.isEmpty()) addMuted("لا توجد نتائج مطابقة")
+        else results.forEach { r ->
+            addRowItem(r.title, r.subtitle + " • " + r.type) {
+                when (r.type) {
+                    "customer" -> showCustomerProfile(r.id)
+                    "vehicle" -> showVehicleProfile(r.id)
+                    "work_order" -> showWorkOrderDetails(r.id)
+                    "part" -> showPartsPage()
+                }
+            }
+        }
+        addOutlineAction("بحث جديد") { showAdvancedSearch() }
+    }
+
+    // ==================== More / Settings / Users ====================
+    private fun showMorePage() {
+        currentTab = "more"
+        shell("المزيد", "إعدادات، مستخدمون، نسخ احتياطي")
+        addCard {
+            val t = TextView(this@MainActivity).apply { text = "👤 حسابي"; textSize = 16f; setTextColor(primary); typeface = Typeface.DEFAULT_BOLD }
+            addView(t)
+            val info = TextView(this@MainActivity).apply { text = (loggedUser?.fullName ?: "") + " • " + (loggedUser?.username ?: "") + " • دور: " + (loggedUser?.role ?: ""); textSize = 14f; setTextColor(dark); setPadding(0, dp(6), 0, 0) }
+            addView(info)
+        }
+        addAction("📊 التقارير") { showReportsPage() }
+        addAction("🔍 بحث متقدم") { showAdvancedSearch() }
+        addAction("💾 نسخ احتياطي / تصدير") { exportBackup() }
+        addAction("👥 إدارة المستخدمين والصلاحيات") { showUsersPage() }
+        addAction("📋 سجل العملاء") { showCustomersPage() }
+        addAction("📋 سجل السيارات") { showVehiclesPage() }
+        addAction("📋 سجل الأوامر") { showWorkOrdersPage() }
+        addDangerAction("🚪 تسجيل الخروج") { logout() }
+    }
+
+    private fun showUsersPage() {
+        if (!allowed("users", "view")) return
+        shell("المستخدمون والصلاحيات", "إدارة حسابات الموظفين")
+        addAction("➕ إضافة مستخدم جديد") { showAddUser() }
+        sectionTitle("كل المستخدمين")
+        db.getAllUsers().forEach { u ->
+            addRowItem(u.fullName + " (" + u.username + ")", "الدور: " + u.role) {
+                val perms = db.getUserPermissions(u.id)
+                val msg = perms.joinToString("\n") { it.module + ": عرض=" + it.canView + " إضافة=" + it.canAdd + " تعديل=" + it.canEdit + " حذف=" + it.canDelete }
+                showMessage("صلاحيات " + u.fullName, if (msg.isBlank()) "مدير - كل الصلاحيات" else msg)
+            }
+        }
+        addOutlineAction("⬅️ عودة") { showMorePage() }
+    }
+
+    private fun showAddUser() {
+        if (!allowed("users", "add")) return
+        shell("مستخدم جديد", "أنشئ حساب موظف بصلاحيات محددة")
+        val box = card(); root.addView(box, matchWidth())
+        val nameF = addFieldTo(box, "الاسم الكامل", "الاسم")
+        val userF = addFieldTo(box, "اسم المستخدم", "username")
+        val passF = addFieldTo(box, "كلمة المرور", "كلمة مرور", "password")
+        box.addView(fieldLabel("الدور"))
+        val roleSp = spinner(listOf("موظف", "مدير", "فني", "استقبال")); box.addView(roleSp, matchWidth())
+        addAction("إنشاء المستخدم") {
+            try {
+                db.createUser(userF.text.toString(), passF.text.toString(), nameF.text.toString(), roleSp.selectedItem.toString())
+                toast("تم إنشاء المستخدم"); showUsersPage()
+            } catch (e: Exception) { toast(e.message ?: "خطأ") }
+        }
+        addOutlineAction("إلغاء") { showUsersPage() }
+    }
+
+    // ==================== Backup ====================
+    private fun exportBackup() {
+        try {
+            val text = db.exportBackupText()
+            val intent = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, text); putExtra(Intent.EXTRA_SUBJECT, "نسخة احتياطية - ورشة خبارة") }
+            startActivity(Intent.createChooser(intent, "مشاركة النسخة الاحتياطية"))
+            // Also save local copy
+            try {
+                val file = File(getExternalFilesDir(null), "workshop_backup.txt")
+                FileOutputStream(file).use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                toast("تم حفظ نسخة في: " + file.absolutePath)
+            } catch (e: Exception) {}
+        } catch (e: Exception) { toast("تعذر التصدير: " + e.message) }
+    }
+
+    // Legacy compatibility - recordsDialog
+    private fun recordsDialog(table: String, title: String) {
+        if (table == "parts") { showPartsPage(); return }
+        when (table) {
+            "customers" -> showCustomersPage()
+            "vehicles" -> showVehiclesPage()
+            "work_orders" -> showWorkOrdersPage()
+        }
     }
 }
