@@ -32,7 +32,6 @@ jobs:
           cp WorkshopDb.kt app/src/main/java/com/khubara/workshop/
           cp AndroidManifest.xml app/src/main/
           cp styles.xml app/src/main/res/values/
-
           python3 - <<'PY'
           from pathlib import Path
           p = Path("app/src/main/java/com/khubara/workshop/MainActivity.kt")
