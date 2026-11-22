@@ -1461,7 +1461,7 @@ fun getWorkOrderPhotos(
                 "UPDATE vehicles SET current_odometer=MAX(current_odometer, ?) WHERE id=?",
                 arrayOf(reading, vehicleId)
             )
-            database.setTransactionSuccessful()
+            database.setTransactionSuccessful()return woId
         } finally {
             database.endTransaction()
         }
