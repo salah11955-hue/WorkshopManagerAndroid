@@ -182,7 +182,7 @@ data class CustomerDebtEntry(
 )
 
 class WorkshopDb(private val appContext: Context) :
-    SQLiteOpenHelper(appContext, "workshop.db", null, 6) {
+    SQLiteOpenHelper(appContext, "workshop.db", null, 7) {
 
     @Volatile
     private var activeUserId: Long? = null
@@ -245,6 +245,34 @@ class WorkshopDb(private val appContext: Context) :
             createPaymentsAndPhotosTables(db)
         }
     }
+if (oldVersion < 7) {
+    createWorkOrderPhotosTable(db)
+}
+
+
+private fun createWorkOrderPhotosTable(db: SQLiteDatabase) {
+    db.execSQL(
+        """
+        CREATE TABLE IF NOT EXISTS work_order_photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_order_id INTEGER NOT NULL,
+            label TEXT NOT NULL DEFAULT 'صورة عند الاستلام',
+            photo_path TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT
+                (datetime('now', 'localtime')),
+            FOREIGN KEY(work_order_id)
+                REFERENCES work_orders(id) ON DELETE CASCADE
+        )
+        """.trimIndent()
+    )
+
+    db.execSQL(
+        """
+        CREATE INDEX IF NOT EXISTS idx_work_order_photos_order
+        ON work_order_photos(work_order_id)
+        """.trimIndent()
+    )
+}
 
     private fun addColumnIfMissing(
         db: SQLiteDatabase,
