@@ -2523,30 +2523,43 @@ class MainActivity : Activity() {
         if (resultCode != RESULT_OK || data == null) return
         val cb = pendingPhotoCallback ?: return
 
-        val savedPath = try {
+        val savedPath: String? = try {
             val dir = File(filesDir, "vehicle_photos").apply { mkdirs() }
             val out = File(dir, "img_${System.currentTimeMillis()}.jpg")
             when (requestCode) {
                 REQ_PICK_PHOTO -> {
-                    val uri: Uri = data.data ?: return
-                    contentResolver.openInputStream(uri)?.use { inp ->
-                        FileOutputStream(out).use { fos -> inp.copyTo(fos) }
-                    } ?: return
-                    out.absolutePath
+                    val uri: Uri? = data.data
+                    if (uri == null) {
+                        null
+                    } else {
+                        val copied = contentResolver.openInputStream(uri)?.use { inp ->
+                            FileOutputStream(out).use { fos -> inp.copyTo(fos) }
+                        }
+                        if (copied != null) out.absolutePath else null
+                    }
                 }
                 REQ_CAPTURE_PHOTO -> {
                     @Suppress("DEPRECATION")
-                    val bmp = data.extras?.get("data") as? Bitmap ?: return
-                    FileOutputStream(out).use { fos -> bmp.compress(Bitmap.CompressFormat.JPEG, 85, fos) }
-                    out.absolutePath
+                    val bmp = data.extras?.get("data") as? Bitmap
+                    if (bmp == null) {
+                        null
+                    } else {
+                        FileOutputStream(out).use { fos -> bmp.compress(Bitmap.CompressFormat.JPEG, 85, fos) }
+                        out.absolutePath
+                    }
                 }
-                else -> return
+                else -> null
             }
         } catch (_: Exception) {
             toast("تعذر حفظ الصورة")
-            return
+            null
         } finally {
             pendingPhotoCallback = null
+        }
+
+        if (savedPath.isNullOrBlank()) {
+            toast("تعذر حفظ الصورة")
+            return
         }
 
         cb(savedPath)
