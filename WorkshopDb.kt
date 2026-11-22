@@ -922,7 +922,7 @@ class WorkshopDb(private val appContext: Context) :
         require(customerExists(customerId)) { "العميل المحدد غير موجود" }
 
         val reading = odometer.toLongOrNull() ?: 0L
-        require(reading >= 0) { "قراءة العداد غير صحيحة" }
+        require(reading >= 0L) { "قراءة العداد غير صحيحة" }
 
         val database = writableDatabase
         database.beginTransaction()
@@ -985,7 +985,7 @@ class WorkshopDb(private val appContext: Context) :
         val cleanPhone = normalizePhone(phone)
         val cleanVin = normalizeVin(vin)
         val reading = odometer.toLongOrNull() ?: 0L
-        if (cleanName.isBlank() || cleanPhone.isBlank() || cleanVin.length != 17 || cleanVin.any { it in "IOQ" } || reading < 0) {
+        if (cleanName.isBlank() || cleanPhone.isBlank() || cleanVin.length != 17 || cleanVin.any { it in "IOQ" } || reading < 0L) {
             return null
         }
 
@@ -1293,7 +1293,7 @@ class WorkshopDb(private val appContext: Context) :
     ) {
         check(hasPermission("work_orders", "add")) { "ليس لديك صلاحية إضافة أمر إصلاح" }
         val reading = odometer.toLongOrNull() ?: 0L
-        require(reading >= 0) { "قراءة العداد غير صحيحة" }
+        require(reading >= 0L) { "قراءة العداد غير صحيحة" }
 
         val labor = laborCost.trim().ifBlank { "0" }.toDoubleOrNull()
             ?: throw IllegalArgumentException("قيمة أجور العمل غير صحيحة")
@@ -1304,10 +1304,10 @@ class WorkshopDb(private val appContext: Context) :
         val downPay = downPayment.trim().ifBlank { "0" }.toDoubleOrNull()
             ?: throw IllegalArgumentException("قيمة الدفعة المقدمة غير صحيحة")
 
-        require(labor.isFinite() && labor >= 0) { "أجور العمل يجب أن تكون رقماً موجباً" }
-        require(parts.isFinite() && parts >= 0) { "تكلفة القطع يجب أن تكون رقماً موجباً" }
-        require(disc.isFinite() && disc >= 0) { "الخصم يجب أن يكون رقماً موجباً" }
-        require(downPay.isFinite() && downPay >= 0) { "الدفعة المقدمة يجب أن تكون رقماً موجباً" }
+        require(labor.isFinite() && labor >= 0.0) { "أجور العمل يجب أن تكون رقماً موجباً" }
+        require(parts.isFinite() && parts >= 0.0) { "تكلفة القطع يجب أن تكون رقماً موجباً" }
+        require(disc.isFinite() && disc >= 0.0) { "الخصم يجب أن يكون رقماً موجباً" }
+        require(downPay.isFinite() && downPay >= 0.0) { "الدفعة المقدمة يجب أن تكون رقماً موجباً" }
 
         val cleanStatus = status.trim().ifBlank { "مفتوح" }
         require(cleanStatus in setOf("مفتوح", "قيد الإصلاح", "قيد العمل", "مكتمل")) {
@@ -1393,7 +1393,7 @@ class WorkshopDb(private val appContext: Context) :
         val disc = discount.trim().ifBlank { "0" }.toDoubleOrNull()
             ?: throw IllegalArgumentException("قيمة الخصم غير صحيحة")
 
-        require(labor.isFinite() && labor >= 0 && parts.isFinite() && parts >= 0 && disc.isFinite() && disc >= 0) {
+        require(labor.isFinite() && labor >= 0.0 && parts.isFinite() && parts >= 0.0 && disc.isFinite() && disc >= 0.0) {
             "القيم المالية يجب أن تكون أرقاماً موجبة"
         }
 
@@ -1491,7 +1491,6 @@ class WorkshopDb(private val appContext: Context) :
                 val woId = c.getLong(0)
                 val downPay = c.getDouble(18)
                 val paymentsTotal = extraPaymentsSum(woId)
-                // إذا وُجدت دفعات في جدول work_order_payments نعتمد مجموعها، وإلا نعتمد الدفعة المقدمة
                 val effectiveAdditional = if (paymentsTotal > 0.0) (paymentsTotal - downPay).coerceAtLeast(0.0) else 0.0
                 out += WorkOrderRecord(
                     id = woId,
@@ -1585,7 +1584,7 @@ class WorkshopDb(private val appContext: Context) :
         require(name.trim().isNotBlank()) { "يرجى إدخال اسم القطعة" }
         require(
             quantity.isFinite() && purchasePrice.isFinite() && salePrice.isFinite() && minQuantity.isFinite() &&
-                quantity >= 0 && purchasePrice >= 0 && salePrice >= 0 && minQuantity >= 0
+                quantity >= 0.0 && purchasePrice >= 0.0 && salePrice >= 0.0 && minQuantity >= 0.0
         ) { "تحقق من الكميات والأسعار" }
 
         writableDatabase.insertOrThrow(
