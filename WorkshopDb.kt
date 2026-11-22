@@ -417,7 +417,7 @@ private fun createWorkOrderPhotosTable(db: SQLiteDatabase) {
         db.execSQL("CREATE INDEX idx_owner_vehicle ON vehicle_owners(vehicle_id)")
         db.execSQL("CREATE INDEX idx_work_vehicle_date ON work_orders(vehicle_id, created_at)")
     }
-
+createWorkOrderPhotosTable(db)
     private fun createUsersTable(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE IF NOT EXISTS app_users (
@@ -993,6 +993,68 @@ private fun createWorkOrderPhotosTable(db: SQLiteDatabase) {
         }
     }
 
+fun addWorkOrderPhoto(
+    workOrderId: Long,
+    label: String,
+    photoPath: String
+): Boolean {
+    check(
+        hasPermission("work_orders", "add") ||
+        hasPermission("work_orders", "edit")
+    ) {
+        "ليس لديك صلاحية إضافة صور لأمر الإصلاح"
+    }
+
+    if (photoPath.isBlank()) return false
+
+    val exists = readableDatabase.rawQuery(
+        "SELECT id FROM work_orders WHERE id=? LIMIT 1",
+        arrayOf(workOrderId.toString())
+    ).use { it.moveToFirst() }
+
+    if (!exists) return false
+
+    val values = ContentValues().apply {
+        put("work_order_id", workOrderId)
+        put("label", label.trim().ifBlank { "صورة عند الاستلام" })
+        put("photo_path", photoPath.trim())
+    }
+
+    return writableDatabase.insert(
+        "work_order_photos",
+        null,
+        values
+    ) > 0
+}
+
+fun getWorkOrderPhotos(
+    workOrderId: Long
+): List<WorkOrderPhotoItem> {
+    val result = mutableListOf<WorkOrderPhotoItem>()
+
+    readableDatabase.rawQuery(
+        """
+        SELECT id, work_order_id, label, photo_path, created_at
+        FROM work_order_photos
+        WHERE work_order_id=?
+        ORDER BY id DESC
+        """.trimIndent(),
+        arrayOf(workOrderId.toString())
+    ).use { cursor ->
+        while (cursor.moveToNext()) {
+            result += WorkOrderPhotoItem(
+                id = cursor.getLong(0),
+                workOrderId = cursor.getLong(1),
+                label = cursor.getString(2) ?: "",
+                photoPath = cursor.getString(3) ?: "",
+                createdAt = cursor.getString(4) ?: ""
+            )
+        }
+    }
+
+    return result
+}
+
     fun addCustomerAndVehicle(
         name: String,
         phone: String,
@@ -1326,7 +1388,7 @@ private fun createWorkOrderPhotosTable(db: SQLiteDatabase) {
         discount: String = "0",
         expectedDelivery: String = "",
         downPayment: String = "0"
-    ) {
+): Long {
         check(hasPermission("work_orders", "add")) { "ليس لديك صلاحية إضافة أمر إصلاح" }
         val reading = odometer.toLongOrNull() ?: 0L
         require(reading >= 0L) { "قراءة العداد غير صحيحة" }
