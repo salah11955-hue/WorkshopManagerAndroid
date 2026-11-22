@@ -37,6 +37,14 @@ data class VehiclePhotoItem(
     val createdAt: String
 )
 
+data class WorkOrderPhotoItem(
+    val id: Long,
+    val workOrderId: Long,
+    val label: String,
+    val photoPath: String,
+    val createdAt: String
+)
+
 data class VehicleProfile(
     val id: Long,
     val customerId: Long,
