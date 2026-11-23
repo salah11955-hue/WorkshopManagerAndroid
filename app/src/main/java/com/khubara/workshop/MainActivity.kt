@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.pdf.PdfDocument
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.net.Uri
@@ -17,6 +18,8 @@ import android.print.PrintManager
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.InputType
+import android.text.Layout
+import android.text.StaticLayout
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
@@ -27,6 +30,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import java.io.File
 import java.io.FileOutputStream
+import androidx.core.content.FileProvider
 
 class MainActivity : Activity() {
 
@@ -585,7 +589,7 @@ class MainActivity : Activity() {
             }
 
             if (suggestionKeys.isNotEmpty() &&
-                type != "password" && type != "number" && type != "decimal" && type != "multiline"
+                type != "password" && type != "number" && type != "decimal"
             ) {
                 threshold = 1
                 val adapter = ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_dropdown_item_1line, mutableListOf())
@@ -1237,6 +1241,22 @@ class MainActivity : Activity() {
                 editWorkOrderDialog(wo) { workOrderDetailsDialog(workOrderId) }
             }
         }
+        val workOrderPhotos = db.getWorkOrderPhotos(workOrderId)
+        if (workOrderPhotos.isNotEmpty()) {
+            actions += "عرض صور أمر الإصلاح (${workOrderPhotos.size})" to {
+                showWorkOrderPhotosDialog(workOrderPhotos)
+            }
+        }
+        if (db.hasPermission("work_orders", "edit") || db.hasPermission("work_orders", "add")) {
+            actions += "+ إضافة صورة لأمر الإصلاح" to {
+                pickOrCapturePhoto("صورة أمر الإصلاح") { savedPath ->
+                    if (db.addWorkOrderPhoto(workOrderId, "صورة من سجل الإصلاح", savedPath)) {
+                        toast("تم إضافة الصورة")
+                        workOrderDetailsDialog(workOrderId)
+                    } else toast("تعذر إضافة الصورة")
+                }
+            }
+        }
         actions += "طباعة / مشاركة الفاتورة" to { shareOrPrintInvoice(wo) }
         if (payments.isNotEmpty()) {
             actions += "عرض سجل الدفعات" to {
@@ -1299,6 +1319,18 @@ class MainActivity : Activity() {
         """.trimIndent()
     }
 
+    private fun showWorkOrderPhotosDialog(photos: List<WorkOrderPhotoItem>) {
+        val items = photos.map { "${it.label}\n${it.createdAt}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("صور أمر الإصلاح")
+            .setItems(items) { _, index ->
+                val photo = photos.getOrNull(index) ?: return@setItems
+                showPhotoPreview(photo.label, photo.photoPath)
+            }
+            .setNegativeButton("إغلاق", null)
+            .show()
+    }
+
     private fun shareOrPrintInvoice(wo: WorkOrderRecord) {
         val invoiceText = buildInvoiceText(wo)
         AlertDialog.Builder(this)
@@ -1312,12 +1344,160 @@ class MainActivity : Activity() {
                 }
                 startActivity(Intent.createChooser(sendIntent, "مشاركة الفاتورة"))
             }
-            .setNeutralButton("طباعة") { _, _ ->
+            .setNeutralButton("إنشاء ومشاركة PDF") { _, _ ->
+                shareInvoicePdf(wo)
+            }
+            .setNegativeButton("طباعة") { _, _ ->
                 printPlainText("Invoice_WO_${wo.id}", invoiceText)
             }
-            .setNegativeButton("إغلاق", null)
             .show()
     }
+
+    private fun shareInvoicePdf(wo: WorkOrderRecord) {
+        try {
+            val pdfDir = File(cacheDir, "pdf").apply { mkdirs() }
+            val pdfFile = File(pdfDir, "invoice_${wo.id}.pdf")
+            val document = PdfDocument()
+            val pageWidth = 595
+            val pageHeight = 842
+            var pageNumber = 1
+            var page = document.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
+            var canvas = page.canvas
+            var y = 42f
+
+            fun finishPage() {
+                document.finishPage(page)
+            }
+
+            fun ensureSpace(height: Float) {
+                if (y + height <= pageHeight - 48f) return
+                finishPage()
+                pageNumber++
+                page = document.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
+                canvas = page.canvas
+                y = 42f
+            }
+
+            fun drawTextBlock(text: String, paint: android.text.TextPaint, alignRight: Boolean = true) {
+                val layoutWidth = pageWidth - 72
+                val alignment = if (alignRight) Layout.Alignment.ALIGN_OPPOSITE else Layout.Alignment.ALIGN_NORMAL
+                val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, layoutWidth)
+                    .setAlignment(alignment)
+                    .setIncludePad(false)
+                    .build()
+                ensureSpace(layout.height.toFloat() + 8f)
+                canvas.save()
+                canvas.translate(36f, y)
+                layout.draw(canvas)
+                canvas.restore()
+                y += layout.height + 8f
+            }
+
+            val titlePaint = android.text.TextPaint().apply {
+                textSize = 20f
+                isFakeBoldText = true
+                color = navyDark
+                textAlign = android.graphics.Paint.Align.CENTER
+            }
+            val headerPaint = android.text.TextPaint().apply {
+                textSize = 14f
+                isFakeBoldText = true
+                color = Color.WHITE
+                textAlign = android.graphics.Paint.Align.CENTER
+            }
+            val normalPaint = android.text.TextPaint().apply {
+                textSize = 12f
+                color = textDark
+            }
+            val totalPaint = android.text.TextPaint().apply {
+                textSize = 15f
+                isFakeBoldText = true
+                color = navyDark
+            }
+
+            canvas.drawColor(Color.rgb(248, 250, 252))
+            canvas.drawRect(0f, 0f, pageWidth.toFloat(), 72f, android.graphics.Paint().apply { color = navyDark })
+            canvas.drawText("خبراء هونداي وفورد", pageWidth / 2f, 32f, titlePaint.apply { color = Color.WHITE })
+            canvas.drawText("فاتورة أمر إصلاح احترافية", pageWidth / 2f, 57f, headerPaint)
+            y = 92f
+
+            drawTextBlock("فاتورة رقم: #${wo.id}", totalPaint)
+            drawTextBlock("التاريخ: ${wo.createdAt}", normalPaint)
+            drawTextBlock("العميل: ${wo.customerName}  |  الهاتف: ${wo.customerPhone}", normalPaint)
+            drawTextBlock("السيارة: ${wo.vehicleName}  |  اللوحة: ${wo.vehiclePlate}", normalPaint)
+            y += 8f
+
+            val detailLines = listOf(
+                "بيانات العمل",
+                "الشكوى: ${wo.complaint.ifBlank { "-" }}",
+                "التشخيص: ${wo.diagnosis.ifBlank { "-" }}",
+                "الإصلاح والتقرير: ${wo.repairNotes.ifBlank { "-" }}",
+                "الفني: ${wo.technicianName.ifBlank { "-" }}  |  التسليم المتوقع: ${wo.expectedDelivery.ifBlank { "-" }}",
+                "تفاصيل التكلفة",
+                "أجور العمل: ${formatMoney(wo.laborCost)}",
+                "تكلفة القطع: ${formatMoney(wo.partsCost)}",
+                "الخصم: ${formatMoney(wo.discount)}",
+                "الإجمالي: ${formatMoney(wo.totalCost)}",
+                "المدفوع: ${formatMoney(wo.paidAmount)}",
+                "المتبقي: ${formatMoney(wo.remainingAmount)}"
+            )
+            detailLines.forEachIndexed { index, line ->
+                val paint = if (index == 0 || index == 5) headerPaint else if (index == 9) totalPaint else normalPaint
+                if (paint === headerPaint) {
+                    val layoutHeight = 28f
+                    ensureSpace(layoutHeight)
+                    canvas.drawRoundRect(36f, y, 559f, y + layoutHeight, 8f, 8f, android.graphics.Paint().apply { color = teal })
+                    canvas.drawText(line, pageWidth / 2f, y + 19f, paint)
+                    y += layoutHeight + 8f
+                } else {
+                    drawTextBlock(line, paint)
+                }
+            }
+
+            val photos = db.getWorkOrderPhotos(wo.id)
+            if (photos.isNotEmpty()) {
+                ensureSpace(80f)
+                canvas.drawRoundRect(36f, y, 559f, y + 28f, 8f, 8f, android.graphics.Paint().apply { color = gold })
+                canvas.drawText("صور أمر الإصلاح", pageWidth / 2f, y + 19f, headerPaint)
+                y += 36f
+                photos.forEach { photo ->
+                    val bitmap = BitmapFactory.decodeFile(photo.photoPath)
+                    if (bitmap != null) {
+                        ensureSpace(250f)
+                        val maxWidth = 480f
+                        val maxHeight = 220f
+                        val scale = minOf(maxWidth / bitmap.width, maxHeight / bitmap.height)
+                        val scaledWidth = bitmap.width * scale
+                        val scaledHeight = bitmap.height * scale
+                        val left = (pageWidth - scaledWidth) / 2f
+                        canvas.drawBitmap(bitmap, null, android.graphics.RectF(left, y, left + scaledWidth, y + scaledHeight), null)
+                        y += scaledHeight + 12f
+                        drawTextBlock(photo.label, normalPaint)
+                        bitmap.recycle()
+                    }
+                }
+            }
+
+            drawTextBlock("شكراً لتعاملكم معنا", normalPaint, false)
+            finishPage()
+            FileOutputStream(pdfFile).use { output -> document.writeTo(output) }
+            document.close()
+
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", pdfFile)
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "فاتورة أمر شغل #${wo.id}")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(shareIntent, "مشاركة فاتورة PDF"))
+        } catch (_: Exception) {
+            toast("تعذر إنشاء ملف PDF؛ يمكنك استخدام الطباعة")
+        }
+    }
+
+    private fun formatMoney(value: Double): String =
+        String.format(java.util.Locale("ar"), "%,.2f", value)
 
     private fun printPlainText(jobName: String, text: String) {
         try {
@@ -2142,21 +2322,34 @@ class MainActivity : Activity() {
         }
 
         val prioritySpinner = spinnerField(listOf("عادية", "مستعجلة", "عاجلة جداً"))
-        val techName = field("اسم الفني")
+        val techName = field("اسم الفني", suggestionKeys = listOf("technician"))
         val expectedDelivery = field("تاريخ التسليم المتوقع (YYYY-MM-DD)")
         val odometer = field("قراءة العداد", "number")
-        val complaint = field("شكوى العميل", "multiline")
-        val diagnosis = field("التشخيص", "multiline")
-        val notes = field("ملاحظات الإصلاح", "multiline")
+        val complaint = field("شكوى العميل", "multiline", listOf("complaint"))
+        val diagnosis = field("التشخيص", "multiline", listOf("diagnosis"))
+        val notes = field("ملاحظات الإصلاح", "multiline", listOf("repair_notes"))
         val labor = field("أجور العمل", "decimal")
         val parts = field("تكلفة القطع", "decimal")
         val discount = field("الخصم", "decimal")
         val downPayment = field("دفعة مقدمة", "decimal")
 
+        val workOrderPhotos = mutableListOf<String>()
+        val photosBtn = Button(this).apply {
+            text = "إرفاق صور عند الاستلام"
+            setTextColor(Color.WHITE)
+            background = buttonBg(gold, gold, navyDark)
+            setOnClickListener {
+                pickOrCapturePhoto("صورة عند الاستلام") { savedPath ->
+                    workOrderPhotos += savedPath
+                    text = "إرفاق صور عند الاستلام (${workOrderPhotos.size})"
+                }
+            }
+        }
+
         val inputs = listOf(techName, expectedDelivery, odometer, complaint, diagnosis, notes, labor, parts, discount, downPayment)
         val views = listOf(
             custSpinner, vehSpinner, prioritySpinner, techName, expectedDelivery,
-            odometer, complaint, diagnosis, notes, labor, parts, discount, downPayment
+            odometer, complaint, diagnosis, notes, labor, parts, discount, downPayment, photosBtn
         )
 
         formDialog("أمر شغل جديد", views, inputs) { dialog ->
@@ -2167,13 +2360,16 @@ class MainActivity : Activity() {
                     ?: throw IllegalArgumentException("لا توجد سيارة مرتبطة بالعميل")
                 require(vItem.second == cId) { "السيارة لا تتبع العميل المحدد" }
 
-                db.addWorkOrder(
+                val workOrderId = db.addWorkOrder(
                     cId, vItem.first, odometer.text.toString(), complaint.text.toString(),
                     diagnosis.text.toString(), notes.text.toString(), "مفتوح",
                     labor.text.toString(), parts.text.toString(),
                     prioritySpinner.selectedItem.toString(), techName.text.toString(),
                     discount.text.toString(), expectedDelivery.text.toString(), downPayment.text.toString()
                 )
+                workOrderPhotos.forEachIndexed { index, photoPath ->
+                    db.addWorkOrderPhoto(workOrderId, if (index == 0) "صورة عند الاستلام" else "صورة إضافية", photoPath)
+                }
                 dialog.dismiss()
                 toast("تم إنشاء أمر الشغل")
                 navigateTo(Screen.TAB_WORK_ORDERS, clearStack = true)
@@ -2520,7 +2716,10 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK || data == null) return
+        if (resultCode != RESULT_OK) {
+            pendingPhotoCallback = null
+            return
+        }
         val cb = pendingPhotoCallback ?: return
 
         val savedPath: String? = try {
@@ -2528,7 +2727,7 @@ class MainActivity : Activity() {
             val out = File(dir, "img_${System.currentTimeMillis()}.jpg")
             when (requestCode) {
                 REQ_PICK_PHOTO -> {
-                    val uri: Uri? = data.data
+                    val uri: Uri? = data?.data
                     if (uri == null) {
                         null
                     } else {
@@ -2540,7 +2739,7 @@ class MainActivity : Activity() {
                 }
                 REQ_CAPTURE_PHOTO -> {
                     @Suppress("DEPRECATION")
-                    val bmp = data.extras?.get("data") as? Bitmap
+                    val bmp = data?.extras?.get("data") as? Bitmap
                     if (bmp == null) {
                         null
                     } else {

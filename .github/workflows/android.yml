@@ -28,10 +28,12 @@ jobs:
         run: |
           mkdir -p app/src/main/java/com/khubara/workshop
           mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/xml
           cp MainActivity.kt app/src/main/java/com/khubara/workshop/
           cp WorkshopDb.kt app/src/main/java/com/khubara/workshop/
           cp AndroidManifest.xml app/src/main/
           cp styles.xml app/src/main/res/values/
+          cp res/xml/provider_paths.xml app/src/main/res/xml/
           python3 - <<'PY'
           from pathlib import Path
           p = Path("app/src/main/java/com/khubara/workshop/MainActivity.kt")

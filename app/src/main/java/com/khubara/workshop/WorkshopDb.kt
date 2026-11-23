@@ -1814,17 +1814,28 @@ fun getWorkOrderPhotos(
             "vin" -> "vehicles.vin" to "vehicles"
             "part_number" -> "parts.part_number" to "parts"
             "part_name" -> "parts.name" to "parts"
+            "make", "manufacturer" -> "vehicles.make" to "vehicles"
+            "model" -> "vehicles.model" to "vehicles"
+            "engine" -> "vehicles.engine" to "vehicles"
+            "color" -> "vehicles.color" to "vehicles"
+            "technician_name", "technician" -> "work_orders.technician_name" to "work_orders"
+            "complaint" -> "work_orders.complaint" to "work_orders"
+            "diagnosis" -> "work_orders.diagnosis" to "work_orders"
+            "repair_notes" -> "work_orders.repair_notes" to "work_orders"
+            "supplier" -> "parts.supplier" to "parts"
+            "barcode" -> "parts.barcode" to "parts"
             else -> return emptyList()
         }
 
         val sql = """
             SELECT DISTINCT $column FROM $table
             WHERE $column LIKE ? COLLATE NOCASE AND TRIM($column) != ''
-            ORDER BY $column LIMIT 10
+            ORDER BY LENGTH($column), $column LIMIT 20
         """.trimIndent()
 
         val results = mutableListOf<String>()
-        readableDatabase.rawQuery(sql, arrayOf("$cleanPrefix%")).use { cursor ->
+        val pattern = "%${cleanPrefix.replace("%", "").replace("_", "")}%"
+        readableDatabase.rawQuery(sql, arrayOf(pattern)).use { cursor ->
             while (cursor.moveToNext()) {
                 val value = cursor.getString(0)
                 if (!value.isNullOrBlank()) results.add(value)
