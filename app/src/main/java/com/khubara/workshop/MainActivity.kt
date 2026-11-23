@@ -31,6 +31,8 @@ import android.widget.*
 import java.io.File
 import java.io.FileOutputStream
 import androidx.core.content.FileProvider
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.MultiFormatWriter
 
 class MainActivity : Activity() {
 
@@ -1257,6 +1259,10 @@ class MainActivity : Activity() {
                 }
             }
         }
+        actions += "إدارة مهام القطع والموافقة والتسليم" to {
+            workOrderLifecycleDialog(wo)
+        }
+        actions += "عرض ملصق QR للأمر" to { showWorkOrderQrDialog(wo) }
         actions += "طباعة / مشاركة الفاتورة" to { shareOrPrintInvoice(wo) }
         if (payments.isNotEmpty()) {
             actions += "عرض سجل الدفعات" to {
@@ -1273,6 +1279,182 @@ class MainActivity : Activity() {
             .setItems(actions.map { it.first }.toTypedArray()) { _, i -> actions[i].second.invoke() }
             .setPositiveButton("إغلاق", null)
             .show()
+    }
+
+    private fun showWorkOrderQrDialog(wo: WorkOrderRecord) {
+        try {
+            val payload = "WORKSHOP|ORDER:${wo.id}|CUSTOMER:${wo.customerName}|PHONE:${wo.customerPhone}|PLATE:${wo.vehiclePlate}"
+            val bitMatrix = MultiFormatWriter().encode(payload, BarcodeFormat.QR_CODE, 640, 640)
+            val bitmap = Bitmap.createBitmap(640, 640, Bitmap.Config.RGB_565)
+            for (x in 0 until 640) {
+                for (y in 0 until 640) {
+                    bitmap.setPixel(x, y, if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE)
+                }
+            }
+            val image = ImageView(this).apply {
+                setImageBitmap(bitmap)
+                adjustViewBounds = true
+                setPadding(dp(24), dp(24), dp(24), dp(24))
+            }
+            AlertDialog.Builder(this)
+                .setTitle("QR — أمر #${wo.id}")
+                .setView(image)
+                .setNegativeButton("إغلاق", null)
+                .show()
+        } catch (_: Exception) {
+            toast("تعذر إنشاء رمز QR")
+        }
+    }
+
+    private fun showActionList(title: String, message: String, actions: List<Pair<String, () -> Unit>>) {
+        val body = TextView(this).apply {
+            text = message
+            textSize = 13.5f
+            setTextColor(textDark)
+            setPadding(dp(18), dp(14), dp(18), dp(8))
+        }
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(body)
+            .setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second.invoke() }
+            .setNegativeButton("إغلاق", null)
+            .show()
+    }
+
+    private fun workOrderLifecycleDialog(wo: WorkOrderRecord) {
+        val usedParts = db.getUsedParts(wo.id)
+        val tasks = db.getWorkOrderTasks(wo.id)
+        val summary = buildString {
+            append("القطع المستخدمة: ${usedParts.size}\n")
+            usedParts.take(6).forEach { append("${it.quantity} × ${it.partName} — ${formatMoney(it.totalPrice)}\n") }
+            append("\nالمهام: ${tasks.size}\n")
+            tasks.take(8).forEach { append("${it.title} — ${it.status}${if (it.assignedTo.isNotBlank()) " (${it.assignedTo})" else ""}\n") }
+        }
+
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        actions += "إضافة قطعة مستخدمة" to { addUsedPartDialog(wo) }
+        actions += "إضافة مهمة للفني" to { addTaskDialog(wo) }
+        actions += "عرض وتحديث المهام" to { manageTasksDialog(wo) }
+        actions += "حجز موعد تسليم / مراجعة" to { addAppointmentDialog(wo) }
+        actions += "موافقة العميل وتسليم السيارة" to { signWorkOrderDocumentDialog(wo) }
+
+        showActionList(
+            "دورة أمر الإصلاح #${wo.id}",
+            summary.ifBlank { "لا توجد قطع أو مهام مسجلة بعد." },
+            actions
+        )
+    }
+
+    private fun addUsedPartDialog(wo: WorkOrderRecord) {
+        val parts = db.getAllParts(500).filter { it.quantity > 0.0 }
+        if (parts.isEmpty()) {
+            toast("لا توجد قطع متاحة في المخزون")
+            return
+        }
+        val partSpinner = spinnerField(parts.map { "${it.name} — متاح ${it.quantity} ${it.unit}" })
+        val quantity = field("الكمية المستخدمة", "decimal")
+        formDialog("إضافة قطعة للأمر #${wo.id}", listOf(partSpinner, quantity), listOf(quantity)) { dialog ->
+            try {
+                val part = parts.getOrNull(partSpinner.selectedItemPosition)
+                    ?: throw IllegalArgumentException("اختر قطعة")
+                val qty = quantity.text.toString().toDoubleOrNull()
+                    ?: throw IllegalArgumentException("أدخل الكمية")
+                if (!db.addUsedPart(wo.id, part.id, qty)) throw IllegalArgumentException("تعذر إضافة القطعة")
+                dialog.dismiss()
+                toast("تم خصم القطعة وتحديث تكلفة الأمر")
+                workOrderDetailsDialog(wo.id)
+            } catch (e: Exception) {
+                toast(e.message ?: "تعذر إضافة القطعة")
+            }
+        }
+    }
+
+    private fun addTaskDialog(wo: WorkOrderRecord) {
+        val title = field("اسم المهمة")
+        val assigned = field("الفني المسؤول", suggestionKeys = listOf("technician"))
+        val due = field("موعد المهمة (YYYY-MM-DD)")
+        val notes = field("ملاحظات المهمة", "multiline")
+        formDialog("مهمة لأمر #${wo.id}", listOf(title, assigned, due, notes), listOf(title, assigned, due, notes)) { dialog ->
+            try {
+                if (!db.addWorkOrderTask(wo.id, title.text.toString(), assigned.text.toString(), due.text.toString(), notes.text.toString())) {
+                    throw IllegalArgumentException("تعذر إضافة المهمة")
+                }
+                dialog.dismiss()
+                toast("تمت إضافة المهمة")
+                workOrderLifecycleDialog(wo)
+            } catch (e: Exception) {
+                toast(e.message ?: "تعذر إضافة المهمة")
+            }
+        }
+    }
+
+    private fun manageTasksDialog(wo: WorkOrderRecord) {
+        val tasks = db.getWorkOrderTasks(wo.id)
+        if (tasks.isEmpty()) {
+            toast("لا توجد مهام لهذا الأمر")
+            return
+        }
+        val items = tasks.map { "${it.title} — ${it.status}${if (it.assignedTo.isNotBlank()) " — ${it.assignedTo}" else ""}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("مهام أمر #${wo.id}")
+            .setItems(items) { _, index ->
+                val task = tasks[index]
+                val statuses = arrayOf("قيد الانتظار", "قيد التنفيذ", "مكتملة")
+                AlertDialog.Builder(this)
+                    .setTitle(task.title)
+                    .setItems(statuses) { _, statusIndex ->
+                        if (db.updateWorkOrderTask(task.id, statuses[statusIndex])) {
+                            toast("تم تحديث المهمة")
+                            workOrderLifecycleDialog(wo)
+                        } else toast("تعذر تحديث المهمة")
+                    }
+                    .setNegativeButton("إلغاء", null)
+                    .show()
+            }
+            .setNegativeButton("إغلاق", null)
+            .show()
+    }
+
+    private fun addAppointmentDialog(wo: WorkOrderRecord) {
+        val startsAt = field("موعد الزيارة (YYYY-MM-DD HH:MM)")
+        val purpose = field("الغرض", suggestionKeys = listOf("complaint"))
+        val notes = field("ملاحظات الموعد", "multiline")
+        formDialog("موعد لأمر #${wo.id}", listOf(startsAt, purpose, notes), listOf(startsAt, purpose, notes)) { dialog ->
+            try {
+                if (!db.addAppointment(wo.customerId, wo.vehicleId, wo.id, startsAt.text.toString(), purpose.text.toString(), notes.text.toString())) {
+                    throw IllegalArgumentException("تعذر إضافة الموعد")
+                }
+                dialog.dismiss()
+                toast("تمت جدولة الموعد")
+            } catch (e: Exception) {
+                toast(e.message ?: "تعذر جدولة الموعد")
+            }
+        }
+    }
+
+    private fun signWorkOrderDocumentDialog(wo: WorkOrderRecord) {
+        val signedBy = field("اسم العميل / المفوض بالتوقيع")
+        val documentType = spinnerField(listOf("موافقة على التكلفة", "إذن إصلاح", "استلام السيارة"))
+        val content = field("تفاصيل الموافقة أو التسليم", "multiline")
+        formDialog("موافقة وتسليم أمر #${wo.id}", listOf(documentType, signedBy, content), listOf(signedBy, content)) { dialog ->
+            try {
+                val title = documentType.selectedItem.toString()
+                if (!db.signWorkOrderDocument(wo.id, title, title, signedBy.text.toString(), content.text.toString())) {
+                    throw IllegalArgumentException("تعذر حفظ المستند")
+                }
+                if (title == "استلام السيارة") {
+                    db.updateWorkOrder(
+                        wo.id, "مكتمل", wo.diagnosis, wo.repairNotes,
+                        wo.laborCost.toString(), wo.partsCost.toString(),
+                        wo.priority, wo.technicianName, wo.discount.toString(), wo.expectedDelivery
+                    )
+                }
+                dialog.dismiss()
+                toast("تم حفظ الموافقة والتوقيع الرقمي")
+            } catch (e: Exception) {
+                toast(e.message ?: "تعذر حفظ المستند")
+            }
+        }
     }
 
     private fun addPaymentDialog(wo: WorkOrderRecord) {
@@ -1658,6 +1840,10 @@ class MainActivity : Activity() {
         if (db.hasPermission("work_orders", "view")) {
             addPrimaryButton("التقرير اليومي وأكبر الديون", toolsCard, teal) { navigateTo(Screen.REPORTS) }
         }
+        if (db.hasPermission("work_orders", "view")) {
+            addPrimaryButton("المواعيد والتنبيهات", toolsCard, gold) { appointmentsDialog() }
+        }
+        addSecondaryButton("الفروع وسجل التدقيق", toolsCard) { branchesAndAuditDialog() }
         addSecondaryButton("البحث المتقدم الشامل", toolsCard) { navigateTo(Screen.SEARCH) }
         addPrimaryButton("تصدير نسخة احتياطية ومشاركتها", toolsCard, navyDark) { exportAndShareBackup() }
 
@@ -1668,6 +1854,68 @@ class MainActivity : Activity() {
         }
 
         addDangerButton("تسجيل الخروج", root) { logout() }
+    }
+
+    private fun branchesAndAuditDialog() {
+        val branches = db.getBranches()
+        val branchText = branches.joinToString("\n") { "${if (it.isActive) "●" else "○"} ${it.name} — ${it.address.ifBlank { "بدون عنوان" }}" }
+        val audit = db.getAuditRecords(20)
+        val auditText = audit.joinToString("\n") {
+            "${it.createdAt} — ${it.username.ifBlank { "النظام" }} — ${it.action}${if (it.details.isNotBlank()) " (${it.details})" else ""}"
+        }
+        val message = "الفروع:\n${branchText.ifBlank { "لا توجد فروع" }}\n\nآخر الحركات:\n${auditText.ifBlank { "لا توجد حركات مسجلة" }}"
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        if (db.hasPermission("users", "add") || db.hasPermission("users", "edit")) {
+            actions += "إضافة فرع" to { addBranchDialog() }
+        }
+        showActionList("الفروع وسجل التدقيق", message, actions)
+    }
+
+    private fun addBranchDialog() {
+        val name = field("اسم الفرع")
+        val address = field("عنوان الفرع")
+        val phone = field("هاتف الفرع", "phone")
+        formDialog("إضافة فرع", listOf(name, address, phone), listOf(name, address, phone)) { dialog ->
+            try {
+                if (!db.addBranch(name.text.toString(), address.text.toString(), phone.text.toString())) {
+                    throw IllegalArgumentException("تعذر إضافة الفرع")
+                }
+                dialog.dismiss()
+                toast("تمت إضافة الفرع")
+                branchesAndAuditDialog()
+            } catch (e: Exception) {
+                toast(e.message ?: "تعذر إضافة الفرع")
+            }
+        }
+    }
+
+    private fun appointmentsDialog() {
+        val appointments = db.getAppointments()
+        if (appointments.isEmpty()) {
+            toast("لا توجد مواعيد مجدولة")
+            return
+        }
+        val items = appointments.map {
+            "${it.startsAt} — ${it.customerName}${if (it.vehicleName.isNotBlank()) " — ${it.vehicleName}" else ""}\n${it.purpose.ifBlank { "مراجعة ورشة" }} — ${it.status}"
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("المواعيد والتنبيهات")
+            .setItems(items) { _, index ->
+                val appointment = appointments[index]
+                val statuses = arrayOf("مجدول", "تم التأكيد", "تمت الزيارة", "ملغي")
+                AlertDialog.Builder(this)
+                    .setTitle("تحديث الموعد")
+                    .setItems(statuses) { _, statusIndex ->
+                        if (db.updateAppointmentStatus(appointment.id, statuses[statusIndex])) {
+                            toast("تم تحديث الموعد")
+                            appointmentsDialog()
+                        } else toast("تعذر تحديث الموعد")
+                    }
+                    .setNegativeButton("إلغاء", null)
+                    .show()
+            }
+            .setNegativeButton("إغلاق", null)
+            .show()
     }
 
     private fun exportAndShareBackup() {

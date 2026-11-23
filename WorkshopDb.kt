@@ -160,6 +160,60 @@ data class UserPermission(
     val canDelete: Boolean
 )
 
+data class WorkOrderPartItem(
+    val id: Long,
+    val workOrderId: Long,
+    val partId: Long,
+    val partName: String,
+    val quantity: Double,
+    val unitPrice: Double,
+    val totalPrice: Double,
+    val createdAt: String
+)
+
+data class WorkOrderTaskItem(
+    val id: Long,
+    val workOrderId: Long,
+    val title: String,
+    val status: String,
+    val assignedTo: String,
+    val notes: String,
+    val dueAt: String,
+    val completedAt: String,
+    val createdAt: String
+)
+
+data class AppointmentRecord(
+    val id: Long,
+    val customerId: Long,
+    val vehicleId: Long,
+    val workOrderId: Long,
+    val customerName: String,
+    val vehicleName: String,
+    val startsAt: String,
+    val status: String,
+    val purpose: String,
+    val notes: String
+)
+
+data class BranchRecord(
+    val id: Long,
+    val name: String,
+    val address: String,
+    val phone: String,
+    val isActive: Boolean
+)
+
+data class AuditRecord(
+    val id: Long,
+    val username: String,
+    val action: String,
+    val entityType: String,
+    val entityId: Long,
+    val details: String,
+    val createdAt: String
+)
+
 data class DailyReportSummary(
     val date: String,
     val ordersCount: Int,
@@ -182,7 +236,7 @@ data class CustomerDebtEntry(
 )
 
 class WorkshopDb(private val appContext: Context) :
-    SQLiteOpenHelper(appContext, "workshop.db", null, 7) {
+    SQLiteOpenHelper(appContext, "workshop.db", null, 8) {
 
     @Volatile
     private var activeUserId: Long? = null
@@ -204,6 +258,8 @@ class WorkshopDb(private val appContext: Context) :
         createBusinessTables(db)
         createUsersTable(db)
         createPermissionsTable(db)
+        createWorkOrderPhotosTable(db)
+        createWorkshopExtensionTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -247,7 +303,93 @@ class WorkshopDb(private val appContext: Context) :
         if (oldVersion < 7) {
             createWorkOrderPhotosTable(db)
         }
+        if (oldVersion < 8) {
+            createWorkshopExtensionTables(db)
+        }
     }
+
+private fun createWorkshopExtensionTables(db: SQLiteDatabase) {
+    db.execSQL(
+        """CREATE TABLE IF NOT EXISTS work_order_parts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_order_id INTEGER NOT NULL,
+            part_id INTEGER NOT NULL,
+            quantity REAL NOT NULL DEFAULT 1,
+            unit_price REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY(work_order_id) REFERENCES work_orders(id) ON DELETE CASCADE,
+            FOREIGN KEY(part_id) REFERENCES parts(id)
+        )"""
+    )
+    db.execSQL(
+        """CREATE TABLE IF NOT EXISTS work_order_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_order_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'قيد الانتظار',
+            assigned_to TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            due_at TEXT NOT NULL DEFAULT '',
+            completed_at TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY(work_order_id) REFERENCES work_orders(id) ON DELETE CASCADE
+        )"""
+    )
+    db.execSQL(
+        """CREATE TABLE IF NOT EXISTS appointments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL,
+            vehicle_id INTEGER NOT NULL DEFAULT 0,
+            work_order_id INTEGER NOT NULL DEFAULT 0,
+            starts_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'مجدول',
+            purpose TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY(customer_id) REFERENCES customers(id)
+        )"""
+    )
+    db.execSQL(
+        """CREATE TABLE IF NOT EXISTS branches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            address TEXT NOT NULL DEFAULT '',
+            phone TEXT NOT NULL DEFAULT '',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        )"""
+    )
+    db.execSQL(
+        """CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 0,
+            username TEXT NOT NULL DEFAULT '',
+            action TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_id INTEGER NOT NULL DEFAULT 0,
+            details TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        )"""
+    )
+    db.execSQL(
+        """CREATE TABLE IF NOT EXISTS work_order_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            work_order_id INTEGER NOT NULL,
+            document_type TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            content TEXT NOT NULL DEFAULT '',
+            signed_by TEXT NOT NULL DEFAULT '',
+            signed_at TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY(work_order_id) REFERENCES work_orders(id) ON DELETE CASCADE
+        )"""
+    )
+    db.execSQL("CREATE INDEX IF NOT EXISTS idx_work_order_parts_order ON work_order_parts(work_order_id)")
+    db.execSQL("CREATE INDEX IF NOT EXISTS idx_work_order_tasks_order ON work_order_tasks(work_order_id)")
+    db.execSQL("CREATE INDEX IF NOT EXISTS idx_appointments_start ON appointments(starts_at)")
+    db.execSQL("CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at)")
+    db.execSQL("INSERT OR IGNORE INTO branches(name, address, phone) VALUES ('الفرع الرئيسي', '', '')")
+}
 
 
 private fun createWorkOrderPhotosTable(db: SQLiteDatabase) {
@@ -1658,6 +1800,265 @@ fun getWorkOrderPhotos(
             collectedTotal = collectedSum,
             remainingDebtTotal = remainingDebt
         )
+    }
+
+    fun addUsedPart(workOrderId: Long, partId: Long, quantity: Double): Boolean {
+        check(hasPermission("work_orders", "edit")) { "ليس لديك صلاحية استخدام قطع الغيار" }
+        require(quantity.isFinite() && quantity > 0.0) { "كمية القطعة غير صحيحة" }
+        val database = writableDatabase
+        database.beginTransaction()
+        try {
+            val part = database.rawQuery(
+                "SELECT name, quantity, sale_price FROM parts WHERE id=? LIMIT 1",
+                arrayOf(partId.toString())
+            ).use { cursor ->
+                if (!cursor.moveToFirst()) null
+                else Triple(cursor.getString(0) ?: "", cursor.getDouble(1), cursor.getDouble(2))
+            } ?: throw IllegalArgumentException("القطعة غير موجودة")
+            require(part.second >= quantity) { "الكمية المتاحة في المخزون أقل من الكمية المطلوبة" }
+
+            database.insert(
+                "work_order_parts",
+                null,
+                ContentValues().apply {
+                    put("work_order_id", workOrderId)
+                    put("part_id", partId)
+                    put("quantity", quantity)
+                    put("unit_price", part.third)
+                }
+            )
+            val newQuantity = part.second - quantity
+            database.update("parts", ContentValues().apply { put("quantity", newQuantity) }, "id=?", arrayOf(partId.toString()))
+            val addedCost = quantity * part.third
+            val currentPartsCost = database.rawQuery(
+                "SELECT parts_cost FROM work_orders WHERE id=?",
+                arrayOf(workOrderId.toString())
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getDouble(0) else 0.0 }
+            database.update(
+                "work_orders",
+                ContentValues().apply { put("parts_cost", currentPartsCost + addedCost) },
+                "id=?",
+                arrayOf(workOrderId.toString())
+            )
+            logAudit("إضافة قطعة لأمر إصلاح", "work_order", workOrderId, "القطعة=${part.first}, الكمية=$quantity")
+            database.setTransactionSuccessful()
+            return true
+        } finally {
+            database.endTransaction()
+        }
+    }
+
+    fun getUsedParts(workOrderId: Long): List<WorkOrderPartItem> {
+        val result = mutableListOf<WorkOrderPartItem>()
+        readableDatabase.rawQuery(
+            """SELECT wp.id, wp.work_order_id, wp.part_id, p.name, wp.quantity, wp.unit_price,
+                      wp.quantity * wp.unit_price, wp.created_at
+               FROM work_order_parts wp
+               JOIN parts p ON p.id = wp.part_id
+               WHERE wp.work_order_id=? ORDER BY wp.id DESC""",
+            arrayOf(workOrderId.toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += WorkOrderPartItem(
+                    cursor.getLong(0), cursor.getLong(1), cursor.getLong(2),
+                    cursor.getString(3) ?: "", cursor.getDouble(4), cursor.getDouble(5),
+                    cursor.getDouble(6), cursor.getString(7) ?: ""
+                )
+            }
+        }
+        return result
+    }
+
+    fun addWorkOrderTask(workOrderId: Long, title: String, assignedTo: String, dueAt: String, notes: String = ""): Boolean {
+        check(hasPermission("work_orders", "edit")) { "ليس لديك صلاحية إدارة مهام الإصلاح" }
+        if (title.trim().isBlank()) return false
+        val inserted = writableDatabase.insert(
+            "work_order_tasks",
+            null,
+            ContentValues().apply {
+                put("work_order_id", workOrderId)
+                put("title", title.trim())
+                put("assigned_to", assignedTo.trim())
+                put("due_at", dueAt.trim())
+                put("notes", notes.trim())
+            }
+        )
+        if (inserted > 0) logAudit("إضافة مهمة إصلاح", "work_order", workOrderId, title.trim())
+        return inserted > 0
+    }
+
+    fun getWorkOrderTasks(workOrderId: Long): List<WorkOrderTaskItem> {
+        val result = mutableListOf<WorkOrderTaskItem>()
+        readableDatabase.rawQuery(
+            """SELECT id, work_order_id, title, status, assigned_to, notes, due_at, completed_at, created_at
+               FROM work_order_tasks WHERE work_order_id=? ORDER BY id""",
+            arrayOf(workOrderId.toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += WorkOrderTaskItem(
+                    cursor.getLong(0), cursor.getLong(1), cursor.getString(2) ?: "",
+                    cursor.getString(3) ?: "قيد الانتظار", cursor.getString(4) ?: "",
+                    cursor.getString(5) ?: "", cursor.getString(6) ?: "",
+                    cursor.getString(7) ?: "", cursor.getString(8) ?: ""
+                )
+            }
+        }
+        return result
+    }
+
+    fun updateWorkOrderTask(taskId: Long, status: String, notes: String = ""): Boolean {
+        check(hasPermission("work_orders", "edit")) { "ليس لديك صلاحية تعديل مهام الإصلاح" }
+        val completedAt = if (status == "مكتملة") todayStringWithTime() else ""
+        val rows = writableDatabase.update(
+            "work_order_tasks",
+            ContentValues().apply {
+                put("status", status)
+                put("notes", notes.trim())
+                put("completed_at", completedAt)
+            },
+            "id=?",
+            arrayOf(taskId.toString())
+        )
+        return rows == 1
+    }
+
+    fun addAppointment(customerId: Long, vehicleId: Long, workOrderId: Long, startsAt: String, purpose: String, notes: String): Boolean {
+        if (startsAt.trim().isBlank()) return false
+        val inserted = writableDatabase.insert(
+            "appointments",
+            null,
+            ContentValues().apply {
+                put("customer_id", customerId)
+                put("vehicle_id", vehicleId)
+                put("work_order_id", workOrderId)
+                put("starts_at", startsAt.trim())
+                put("purpose", purpose.trim())
+                put("notes", notes.trim())
+            }
+        )
+        if (inserted > 0) logAudit("إضافة موعد", "appointment", inserted, purpose.trim())
+        return inserted > 0
+    }
+
+    fun getAppointments(limit: Int = 100): List<AppointmentRecord> {
+        val result = mutableListOf<AppointmentRecord>()
+        readableDatabase.rawQuery(
+            """SELECT a.id, a.customer_id, a.vehicle_id, a.work_order_id,
+                      COALESCE(c.name, ''), COALESCE(v.make || ' ' || v.model, ''),
+                      a.starts_at, a.status, a.purpose, a.notes
+               FROM appointments a
+               LEFT JOIN customers c ON c.id=a.customer_id
+               LEFT JOIN vehicles v ON v.id=a.vehicle_id
+               ORDER BY a.starts_at DESC LIMIT ?""",
+            arrayOf(limit.toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += AppointmentRecord(
+                    cursor.getLong(0), cursor.getLong(1), cursor.getLong(2), cursor.getLong(3),
+                    cursor.getString(4) ?: "", cursor.getString(5) ?: "", cursor.getString(6) ?: "",
+                    cursor.getString(7) ?: "", cursor.getString(8) ?: "", cursor.getString(9) ?: ""
+                )
+            }
+        }
+        return result
+    }
+
+    fun updateAppointmentStatus(appointmentId: Long, status: String): Boolean =
+        writableDatabase.update(
+            "appointments",
+            ContentValues().apply { put("status", status) },
+            "id=?",
+            arrayOf(appointmentId.toString())
+        ) == 1
+
+    fun signWorkOrderDocument(workOrderId: Long, documentType: String, title: String, signedBy: String, content: String): Boolean {
+        val inserted = writableDatabase.insert(
+            "work_order_documents",
+            null,
+            ContentValues().apply {
+                put("work_order_id", workOrderId)
+                put("document_type", documentType)
+                put("title", title)
+                put("content", content)
+                put("signed_by", signedBy.trim())
+                put("signed_at", todayStringWithTime())
+            }
+        )
+        if (inserted > 0) logAudit("توقيع مستند", "work_order", workOrderId, title)
+        return inserted > 0
+    }
+
+    fun logAudit(action: String, entityType: String, entityId: Long, details: String = "") {
+        val user = currentUserSnapshot()
+        writableDatabase.insert(
+            "audit_log",
+            null,
+            ContentValues().apply {
+                put("user_id", user?.id ?: 0)
+                put("username", user?.username ?: "")
+                put("action", action)
+                put("entity_type", entityType)
+                put("entity_id", entityId)
+                put("details", details)
+            }
+        )
+    }
+
+    fun getBranches(): List<BranchRecord> {
+        val result = mutableListOf<BranchRecord>()
+        readableDatabase.rawQuery(
+            "SELECT id, name, address, phone, is_active FROM branches ORDER BY id",
+            null
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += BranchRecord(
+                    cursor.getLong(0), cursor.getString(1) ?: "", cursor.getString(2) ?: "",
+                    cursor.getString(3) ?: "", cursor.getInt(4) == 1
+                )
+            }
+        }
+        return result
+    }
+
+    fun addBranch(name: String, address: String, phone: String): Boolean {
+        check(hasPermission("users", "add") || hasPermission("users", "edit")) { "ليس لديك صلاحية إدارة الفروع" }
+        if (name.trim().isBlank()) return false
+        val inserted = writableDatabase.insert(
+            "branches",
+            null,
+            ContentValues().apply {
+                put("name", name.trim())
+                put("address", address.trim())
+                put("phone", phone.trim())
+            }
+        )
+        if (inserted > 0) logAudit("إضافة فرع", "branch", inserted, name.trim())
+        return inserted > 0
+    }
+
+    fun getAuditRecords(limit: Int = 100): List<AuditRecord> {
+        val result = mutableListOf<AuditRecord>()
+        readableDatabase.rawQuery(
+            """SELECT id, username, action, entity_type, entity_id, details, created_at
+               FROM audit_log ORDER BY id DESC LIMIT ?""",
+            arrayOf(limit.toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += AuditRecord(
+                    cursor.getLong(0), cursor.getString(1) ?: "", cursor.getString(2) ?: "",
+                    cursor.getString(3) ?: "", cursor.getLong(4), cursor.getString(5) ?: "",
+                    cursor.getString(6) ?: ""
+                )
+            }
+        }
+        return result
+    }
+
+    private fun currentUserSnapshot(): AuthUser? = currentUser()
+
+    private fun todayStringWithTime(): String {
+        val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale("ar"))
+        return fmt.format(Date())
     }
 
     // ---------- قطع الغيار والمخزون ----------
