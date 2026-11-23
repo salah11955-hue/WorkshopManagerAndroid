@@ -1597,7 +1597,7 @@ class MainActivity : Activity() {
 
         val resultsCard = createCard("النتائج", navyDark)
 
-        val executeSearch = {
+        val executeSearch: () -> Unit = {
             val q = queryInput.text.toString().trim()
             val scope = scopeSpinner.selectedItem.toString()
             resultsCard.removeAllViewsInLayout()

@@ -244,10 +244,10 @@ class WorkshopDb(private val appContext: Context) :
 
             createPaymentsAndPhotosTables(db)
         }
+        if (oldVersion < 7) {
+            createWorkOrderPhotosTable(db)
+        }
     }
-if (oldVersion < 7) {
-    createWorkOrderPhotosTable(db)
-}
 
 
 private fun createWorkOrderPhotosTable(db: SQLiteDatabase) {
@@ -416,8 +416,8 @@ private fun createWorkOrderPhotosTable(db: SQLiteDatabase) {
         db.execSQL("CREATE INDEX idx_vehicle_plate ON vehicles(plate)")
         db.execSQL("CREATE INDEX idx_owner_vehicle ON vehicle_owners(vehicle_id)")
         db.execSQL("CREATE INDEX idx_work_vehicle_date ON work_orders(vehicle_id, created_at)")
+        createWorkOrderPhotosTable(db)
     }
-createWorkOrderPhotosTable(db)
     private fun createUsersTable(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE IF NOT EXISTS app_users (
@@ -1141,8 +1141,8 @@ fun getWorkOrderPhotos(
         return result
     }
 
-    private fun insertVehiclePhotoInternal(db: SQLiteDatabase, vehicleId: Long, label: String, path: String) {
-        db.insert(
+    private fun insertVehiclePhotoInternal(db: SQLiteDatabase, vehicleId: Long, label: String, path: String): Long {
+        return db.insert(
             "vehicle_photos",
             null,
             ContentValues().apply {
@@ -1461,7 +1461,8 @@ fun getWorkOrderPhotos(
                 "UPDATE vehicles SET current_odometer=MAX(current_odometer, ?) WHERE id=?",
                 arrayOf(reading, vehicleId)
             )
-            database.setTransactionSuccessful()return woId
+            database.setTransactionSuccessful()
+            return woId
         } finally {
             database.endTransaction()
         }
