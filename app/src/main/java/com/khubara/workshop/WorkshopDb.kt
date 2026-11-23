@@ -3,6 +3,7 @@ package com.khubara.workshop
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteException
 import android.database.sqlite.SQLiteOpenHelper
 import android.util.Base64
 import org.json.JSONArray
@@ -2228,19 +2229,28 @@ fun getWorkOrderPhotos(
             else -> return emptyList()
         }
 
+        val results = mutableListOf<String>()
+        val safePrefix = cleanPrefix
+            .replace("%", "")
+            .replace("_", "")
+        if (safePrefix.isBlank()) return emptyList()
         val sql = """
             SELECT DISTINCT $column FROM $table
-            WHERE $column LIKE ? COLLATE NOCASE AND TRIM($column) != ''
-            ORDER BY LENGTH($column), $column LIMIT 20
+            WHERE $column LIKE ? COLLATE NOCASE
+              AND TRIM($column) != ''
+            ORDER BY LENGTH($column), $column
+            LIMIT 20
         """.trimIndent()
 
-        val results = mutableListOf<String>()
-        val pattern = "%${cleanPrefix.replace("%", "").replace("_", "")}%"
-        readableDatabase.rawQuery(sql, arrayOf(pattern)).use { cursor ->
-            while (cursor.moveToNext()) {
-                val value = cursor.getString(0)
-                if (!value.isNullOrBlank()) results.add(value)
+        try {
+            readableDatabase.rawQuery(sql, arrayOf("$safePrefix%")).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val value = cursor.getString(0)?.trim()
+                    if (!value.isNullOrBlank()) results.add(value)
+                }
             }
+        } catch (_: SQLiteException) {
+            return emptyList()
         }
         return results
     }

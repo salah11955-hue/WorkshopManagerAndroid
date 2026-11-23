@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.database.sqlite.SQLiteException
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -607,7 +608,16 @@ class MainActivity : Activity() {
                             dismissDropDown()
                             return
                         }
-                        val matches = suggestionKeys.flatMap { db.suggestions(it, prefix) }.distinct().take(10)
+                        val matches = suggestionKeys
+                            .flatMap { key ->
+                                try {
+                                    db.suggestions(key, prefix)
+                                } catch (_: SQLiteException) {
+                                    emptyList()
+                                }
+                            }
+                            .distinct()
+                            .take(10)
                         adapter.clear()
                         adapter.addAll(matches)
                         adapter.notifyDataSetChanged()
