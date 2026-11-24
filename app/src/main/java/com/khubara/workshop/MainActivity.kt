@@ -79,10 +79,10 @@ class MainActivity : Activity() {
     // الألوان العصرية الجديدة: كحلي داكن + تركوازي + ذهبي + خلفية فاتحة
     private val navyDark = Color.rgb(15, 23, 42)
     private val navyCard = Color.rgb(30, 41, 59)
-    private val teal = Color.rgb(13, 148, 136)
+    private val teal = Color.rgb(14, 165, 164)
     private val tealDark = Color.rgb(15, 118, 110)
-    private val gold = Color.rgb(194, 145, 55)
-    private val bgLight = Color.rgb(244, 246, 250)
+    private val gold = Color.rgb(245, 158, 11)
+    private val bgLight = Color.rgb(247, 249, 252)
     private val cardWhite = Color.WHITE
     private val borderLight = Color.rgb(216, 222, 232)
     private val textDark = Color.rgb(15, 23, 42)
@@ -158,8 +158,9 @@ class MainActivity : Activity() {
     private fun buildBottomNavBar(): LinearLayout {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(navyDark)
-            setPadding(dp(4), dp(6), dp(4), dp(8))
+            setBackgroundColor(Color.WHITE)
+            elevation = dp(12).toFloat()
+            setPadding(dp(6), dp(7), dp(6), dp(8))
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
 
@@ -180,7 +181,7 @@ class MainActivity : Activity() {
                 setPadding(dp(2), dp(5), dp(2), dp(5))
                 background = GradientDrawable().apply {
                     setColor(if (isSelected) teal else Color.TRANSPARENT)
-                    cornerRadius = dp(10).toFloat()
+                    cornerRadius = dp(14).toFloat()
                 }
                 setOnClickListener {
                     if (loggedUser == null) {
@@ -211,7 +212,7 @@ class MainActivity : Activity() {
                 textSize = 11f
                 gravity = Gravity.CENTER
                 typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                setTextColor(if (isSelected) Color.WHITE else Color.rgb(203, 213, 225))
+                setTextColor(if (isSelected) navyDark else textMuted)
             }
             tabBox.addView(iconTv, matchWidth())
             tabBox.addView(labelTv, matchWidth())
@@ -377,9 +378,10 @@ class MainActivity : Activity() {
             setPadding(dp(14), dp(12), dp(14), dp(14))
             background = GradientDrawable().apply {
                 setColor(cardBackground)
-                cornerRadius = dp(16).toFloat()
+                cornerRadius = dp(18).toFloat()
                 setStroke(dp(1), if (cardBackground == dangerRed) dangerDark else borderLight)
             }
+            elevation = dp(3).toFloat()
         }
 
         val titleTv = TextView(this).apply {
@@ -393,6 +395,46 @@ class MainActivity : Activity() {
 
         root.addView(card, matchWidth().apply { setMargins(0, 0, 0, dp(12)) })
         return card
+    }
+
+    private fun addMetricGrid(parent: LinearLayout, metrics: List<Pair<String, String>>) {
+        val grid = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        metrics.forEach { (label, value) ->
+            val tile = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(8), dp(10), dp(8), dp(10))
+                background = GradientDrawable().apply {
+                    setColor(Color.rgb(248, 250, 252))
+                    cornerRadius = dp(14).toFloat()
+                    setStroke(dp(1), borderLight)
+                }
+            }
+            tile.addView(TextView(this).apply {
+                text = value
+                textSize = 21f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tealDark)
+            }, matchWidth())
+            tile.addView(TextView(this).apply {
+                text = label
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(textMuted)
+                setPadding(0, dp(3), 0, 0)
+            }, matchWidth())
+            grid.addView(
+                tile,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    setMargins(dp(3), dp(3), dp(3), dp(3))
+                }
+            )
+        }
+        parent.addView(grid, matchWidth().apply { setMargins(0, dp(4), 0, dp(6)) })
     }
 
     private fun addText(
@@ -444,7 +486,7 @@ class MainActivity : Activity() {
     private fun buttonBg(fillColor: Int, strokeColor: Int, pressedFill: Int): StateListDrawable {
         val normal = GradientDrawable().apply {
             setColor(fillColor)
-            cornerRadius = dp(12).toFloat()
+            cornerRadius = dp(14).toFloat()
             setStroke(dp(1), strokeColor)
         }
         val pressed = GradientDrawable().apply {
@@ -585,6 +627,7 @@ class MainActivity : Activity() {
                 else -> InputType.TYPE_CLASS_TEXT
             }
             setPadding(dp(12), dp(11), dp(12), dp(11))
+            elevation = dp(1).toFloat()
             background = GradientDrawable().apply {
                 setColor(Color.WHITE)
                 cornerRadius = dp(11).toFloat()
@@ -776,12 +819,12 @@ class MainActivity : Activity() {
 
         // الإحصائيات
         val statsCard = createCard("إحصائيات الورشة", teal)
-        val statLine = mutableListOf<String>()
-        if (db.hasPermission("customers", "view")) statLine += "العملاء: ${db.count("customers")}"
-        if (db.hasPermission("vehicles", "view")) statLine += "السيارات: ${db.count("vehicles")}"
-        if (db.hasPermission("work_orders", "view")) statLine += "الأوامر: ${db.count("work_orders")}"
-        if (db.hasPermission("parts", "view")) statLine += "المخزون: ${db.count("parts")}"
-        if (statLine.isNotEmpty()) addText(statLine.joinToString("  |  "), 14f, navyDark, true, statsCard)
+        val metrics = mutableListOf<Pair<String, String>>()
+        if (db.hasPermission("customers", "view")) metrics += "العملاء" to db.count("customers").toString()
+        if (db.hasPermission("vehicles", "view")) metrics += "السيارات" to db.count("vehicles").toString()
+        if (db.hasPermission("work_orders", "view")) metrics += "الأوامر" to db.count("work_orders").toString()
+        if (db.hasPermission("parts", "view")) metrics += "قطع المخزون" to db.count("parts").toString()
+        if (metrics.isNotEmpty()) addMetricGrid(statsCard, metrics)
 
         if (db.hasPermission("work_orders", "view")) {
             val openC = db.workOrderCountByStatus("مفتوح")
