@@ -1911,7 +1911,7 @@ class MainActivity : Activity() {
                     val pageCanvas = canvas ?: throw IllegalStateException("صفحة التقرير غير جاهزة")
                     pageCanvas.save()
                     pageCanvas.translate(36f, y - top)
-                    pageCanvas.clipRect(0f, top, contentWidth.toFloat(), bottom.toFloat())
+                    pageCanvas.clipRect(0f, top.toFloat(), contentWidth.toFloat(), bottom.toFloat())
                     layout.draw(pageCanvas)
                     pageCanvas.restore()
                     y += bottom - top + 8f
