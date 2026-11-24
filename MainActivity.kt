@@ -2248,12 +2248,13 @@ class MainActivity : Activity() {
             lastBackupFile = file
             toast("تم حفظ النسخة الاحتياطية: ${file.name}")
 
-            val uri = Uri.fromFile(file)
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "application/json"
                 putExtra(Intent.EXTRA_SUBJECT, "نسخة احتياطية - خبراء هونداي وفورد")
                 putExtra(Intent.EXTRA_TEXT, "نسخة احتياطية من بيانات الورشة (${file.name})")
                 putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivity(Intent.createChooser(shareIntent, "مشاركة النسخة الاحتياطية"))
         } catch (_: Exception) {

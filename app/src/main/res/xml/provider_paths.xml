@@ -2,4 +2,5 @@
 <paths>
     <cache-path name="shared_pdfs" path="pdf/" />
     <files-path name="photo_files" path="vehicle_photos/" />
+    <files-path name="backup_exports" path="backups/" />
 </paths>
