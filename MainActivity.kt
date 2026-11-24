@@ -30,6 +30,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import androidx.core.content.FileProvider
 import com.google.zxing.BarcodeFormat
@@ -53,6 +54,8 @@ class MainActivity : Activity() {
         RECEPTION,
         SEARCH,
         REPORTS,
+        VEHICLE_REPORTS,
+        VEHICLE_REPORT_DETAIL,
         USERS,
         PERMISSIONS
     }
@@ -70,6 +73,7 @@ class MainActivity : Activity() {
     private val screenStack = ArrayDeque<Screen>()
     private var currentTab: Tab = Tab.HOME
     private var workOrderFilter: String = "الكل"
+    private var selectedReportVehicleId: Long? = null
     private var selectedPermissionUser: AuthUser? = null
     private var lastBackupFile: File? = null
 
@@ -302,6 +306,9 @@ class MainActivity : Activity() {
             Screen.RECEPTION -> receptionScreen()
             Screen.SEARCH -> advancedSearchScreen()
             Screen.REPORTS -> reportsScreen(WorkshopDb.todayString())
+            Screen.VEHICLE_REPORTS -> vehicleReportsScreen()
+            Screen.VEHICLE_REPORT_DETAIL -> selectedReportVehicleId?.let(::vehicleReportScreen)
+                ?: vehicleReportsScreen()
             Screen.USERS -> usersScreen()
             Screen.PERMISSIONS -> {
                 val target = selectedPermissionUser
@@ -1011,12 +1018,7 @@ class MainActivity : Activity() {
             actions += "تعديل بيانات العميل" to { editCustomerDialog(customerId) }
         }
 
-        AlertDialog.Builder(this)
-            .setTitle("ملف العميل")
-            .setMessage(info)
-            .setItems(actions.map { it.first }.toTypedArray()) { _, i -> actions[i].second.invoke() }
-            .setPositiveButton("إغلاق", null)
-            .show()
+        showMessageWithActions("ملف العميل", info, actions)
     }
 
     private fun editCustomerDialog(customerId: Long) {
@@ -1142,18 +1144,14 @@ class MainActivity : Activity() {
         }
         if (db.hasPermission("work_orders", "view")) {
             actions += "سجل أوامر السيارة" to { showVehicleWorkOrdersDialog(vehicleId) }
+            actions += "تقرير السيارة والفواتير" to { openVehicleReport(vehicleId) }
         }
         if (db.hasPermission("vehicles", "edit")) {
             actions += "نقل ملكية السيارة" to { transferOwnershipDialog(vehicleId, currentOwnerId = v.customerId) }
         }
         actions += "سجل ملاك السيارة" to { showOwnerHistory(vehicleId) }
 
-        AlertDialog.Builder(this)
-            .setTitle("ملف السيارة")
-            .setMessage(details)
-            .setItems(actions.map { it.first }.toTypedArray()) { _, i -> actions[i].second.invoke() }
-            .setPositiveButton("إغلاق", null)
-            .show()
+        showMessageWithActions("ملف السيارة", details, actions)
     }
 
     private fun choosePhotoLabelAndAttach(vehicleId: Long, onDone: () -> Unit) {
@@ -1292,8 +1290,24 @@ class MainActivity : Activity() {
             actions += "+ إضافة دفعة" to { addPaymentDialog(wo) }
         }
         if (db.hasPermission("work_orders", "edit")) {
-            actions += "تعديل الحالة والتشخيص والتكاليف" to {
+            actions += "تحديث حالة العمل والتشخيص والتكاليف" to {
                 editWorkOrderDialog(wo) { workOrderDetailsDialog(workOrderId) }
+            }
+            if (wo.status == "مفتوح") {
+                actions += "بدء تنفيذ الأعمال" to { setWorkOrderStatus(wo, "قيد الإصلاح") }
+            } else if (wo.status == "مكتمل") {
+                actions += "إعادة فتح أمر الشغل" to { setWorkOrderStatus(wo, "مفتوح") }
+            } else {
+                actions += "اعتماد إكمال الأعمال" to {
+                    AlertDialog.Builder(this)
+                        .setTitle("إكمال أمر الشغل #${wo.id}")
+                        .setMessage("هل تم تنفيذ العمل وجاهز لتسليم السيارة؟")
+                        .setPositiveButton("اعتماد الإكمال") { _, _ ->
+                            setWorkOrderStatus(wo, "مكتمل")
+                        }
+                        .setNegativeButton("إلغاء", null)
+                        .show()
+                }
             }
         }
         val workOrderPhotos = db.getWorkOrderPhotos(workOrderId)
@@ -1312,11 +1326,13 @@ class MainActivity : Activity() {
                 }
             }
         }
-        actions += "إدارة مهام القطع والموافقة والتسليم" to {
-            workOrderLifecycleDialog(wo)
+        if (db.hasPermission("work_orders", "edit")) {
+            actions += "تنفيذ العمل والمهام والقطع والتسليم" to {
+                workOrderLifecycleDialog(wo)
+            }
         }
         actions += "عرض ملصق QR للأمر" to { showWorkOrderQrDialog(wo) }
-        actions += "طباعة / مشاركة الفاتورة" to { shareOrPrintInvoice(wo) }
+        actions += "إصدار / إعادة طباعة الفاتورة" to { shareOrPrintInvoice(wo) }
         if (payments.isNotEmpty()) {
             actions += "عرض سجل الدفعات" to {
                 val pText = payments.joinToString("\n\n") {
@@ -1326,12 +1342,21 @@ class MainActivity : Activity() {
             }
         }
 
-        AlertDialog.Builder(this)
-            .setTitle("تفاصيل أمر الشغل #${wo.id}")
-            .setMessage(summary)
-            .setItems(actions.map { it.first }.toTypedArray()) { _, i -> actions[i].second.invoke() }
-            .setPositiveButton("إغلاق", null)
-            .show()
+        showMessageWithActions("تفاصيل أمر الشغل #${wo.id}", summary, actions)
+    }
+
+    private fun setWorkOrderStatus(wo: WorkOrderRecord, status: String) {
+        if (!allowed("work_orders", "edit")) return
+        try {
+            if (!db.setWorkOrderStatus(wo.id, status)) {
+                toast("تعذر تحديث حالة أمر الشغل")
+                return
+            }
+            toast(if (status == "مكتمل") "تم اعتماد إكمال أمر الشغل" else "تم تحديث حالة أمر الشغل")
+            workOrderDetailsDialog(wo.id)
+        } catch (e: Exception) {
+            toast(e.message ?: "تعذر تحديث حالة أمر الشغل")
+        }
     }
 
     private fun showWorkOrderQrDialog(wo: WorkOrderRecord) {
@@ -1360,18 +1385,30 @@ class MainActivity : Activity() {
     }
 
     private fun showActionList(title: String, message: String, actions: List<Pair<String, () -> Unit>>) {
-        val body = TextView(this).apply {
-            text = message
-            textSize = 13.5f
-            setTextColor(textDark)
-            setPadding(dp(18), dp(14), dp(18), dp(8))
-        }
-        AlertDialog.Builder(this)
+        showMessageWithActions(title, message, actions)
+    }
+
+    private fun showMessageWithActions(
+        title: String,
+        message: String,
+        actions: List<Pair<String, () -> Unit>>
+    ) {
+        val builder = AlertDialog.Builder(this)
             .setTitle(title)
-            .setView(body)
-            .setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second.invoke() }
+            .setMessage(message)
             .setNegativeButton("إغلاق", null)
-            .show()
+        if (actions.isNotEmpty()) {
+            builder.setPositiveButton("الإجراءات") { _, _ ->
+                AlertDialog.Builder(this)
+                    .setTitle(title)
+                    .setItems(actions.map { it.first }.toTypedArray()) { _, index ->
+                        actions[index].second.invoke()
+                    }
+                    .setNegativeButton("رجوع", null)
+                    .show()
+            }
+        }
+        builder.show()
     }
 
     private fun workOrderLifecycleDialog(wo: WorkOrderRecord) {
@@ -1385,11 +1422,13 @@ class MainActivity : Activity() {
         }
 
         val actions = mutableListOf<Pair<String, () -> Unit>>()
-        actions += "إضافة قطعة مستخدمة" to { addUsedPartDialog(wo) }
-        actions += "إضافة مهمة للفني" to { addTaskDialog(wo) }
-        actions += "عرض وتحديث المهام" to { manageTasksDialog(wo) }
-        actions += "حجز موعد تسليم / مراجعة" to { addAppointmentDialog(wo) }
-        actions += "موافقة العميل وتسليم السيارة" to { signWorkOrderDocumentDialog(wo) }
+        if (db.hasPermission("work_orders", "edit")) {
+            actions += "إضافة قطعة مستخدمة" to { addUsedPartDialog(wo) }
+            actions += "إضافة مهمة للفني" to { addTaskDialog(wo) }
+            actions += "عرض وتحديث المهام" to { manageTasksDialog(wo) }
+            actions += "حجز موعد تسليم / مراجعة" to { addAppointmentDialog(wo) }
+            actions += "موافقة العميل وتسليم السيارة" to { signWorkOrderDocumentDialog(wo) }
+        }
 
         showActionList(
             "دورة أمر الإصلاح #${wo.id}",
@@ -1496,14 +1535,13 @@ class MainActivity : Activity() {
                     throw IllegalArgumentException("تعذر حفظ المستند")
                 }
                 if (title == "استلام السيارة") {
-                    db.updateWorkOrder(
-                        wo.id, "مكتمل", wo.diagnosis, wo.repairNotes,
-                        wo.laborCost.toString(), wo.partsCost.toString(),
-                        wo.priority, wo.technicianName, wo.discount.toString(), wo.expectedDelivery
-                    )
+                    if (!db.setWorkOrderStatus(wo.id, "مكتمل")) {
+                        throw IllegalStateException("تم حفظ مستند الاستلام لكن تعذر تحديث حالة أمر الشغل")
+                    }
                 }
                 dialog.dismiss()
                 toast("تم حفظ الموافقة والتوقيع الرقمي")
+                workOrderDetailsDialog(wo.id)
             } catch (e: Exception) {
                 toast(e.message ?: "تعذر حفظ المستند")
             }
@@ -1583,16 +1621,39 @@ class MainActivity : Activity() {
                 shareInvoicePdf(wo)
             }
             .setNegativeButton("طباعة") { _, _ ->
-                printPlainText("Invoice_WO_${wo.id}", invoiceText)
+                printInvoicePdf(wo)
             }
             .show()
     }
 
     private fun shareInvoicePdf(wo: WorkOrderRecord) {
         try {
-            val pdfDir = File(cacheDir, "pdf").apply { mkdirs() }
-            val pdfFile = File(pdfDir, "invoice_${wo.id}.pdf")
-            val document = PdfDocument()
+            sharePdfFile(
+                createInvoicePdf(wo),
+                "فاتورة أمر شغل #${wo.id}",
+                "مشاركة فاتورة PDF"
+            )
+        } catch (e: Exception) {
+            toast("تعذر مشاركة الفاتورة: ${e.message ?: "حدث خطأ غير معروف"}")
+        }
+    }
+
+    private fun sharePdfFile(pdfFile: File, subject: String, chooserTitle: String) {
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", pdfFile)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(intent, chooserTitle))
+    }
+
+    private fun createInvoicePdf(wo: WorkOrderRecord): File {
+        val pdfDir = File(cacheDir, "pdf").apply { mkdirs() }
+        val pdfFile = File(pdfDir, "invoice_${wo.id}.pdf")
+        val document = PdfDocument()
+        try {
             val pageWidth = 595
             val pageHeight = 842
             var pageNumber = 1
@@ -1716,75 +1777,285 @@ class MainActivity : Activity() {
             drawTextBlock("شكراً لتعاملكم معنا", normalPaint, false)
             finishPage()
             FileOutputStream(pdfFile).use { output -> document.writeTo(output) }
+            return pdfFile
+        } finally {
             document.close()
+        }
+    }
 
-            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", pdfFile)
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/pdf"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, "فاتورة أمر شغل #${wo.id}")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    private fun shareVehicleReportPdf(vehicleId: Long) {
+        try {
+            val vehicle = db.getVehicleProfile(vehicleId)
+                ?: throw IllegalArgumentException("السيارة غير موجودة")
+            sharePdfFile(
+                createVehicleReportPdf(vehicleId),
+                "تقرير السيارة ${vehicle.make} ${vehicle.model}",
+                "مشاركة تقرير السيارة PDF"
+            )
+        } catch (e: Exception) {
+            toast("تعذرت مشاركة تقرير السيارة: ${e.message ?: "حدث خطأ غير معروف"}")
+        }
+    }
+
+    private fun printVehicleReportPdf(vehicleId: Long) {
+        try {
+            printPdfFile(
+                createVehicleReportPdf(vehicleId),
+                "Vehicle_Report_$vehicleId"
+            )
+        } catch (e: Exception) {
+            toast("تعذرت طباعة تقرير السيارة: ${e.message ?: "يمكنك مشاركة ملف PDF"}")
+        }
+    }
+
+    private fun createVehicleReportPdf(vehicleId: Long): File {
+        val vehicle = db.getVehicleProfile(vehicleId)
+            ?: throw IllegalArgumentException("السيارة غير موجودة")
+        val orders = db.getAllWorkOrders(limit = 2000)
+            .filter { it.vehicleId == vehicleId }
+        val customerNote = db.getVehicleReportNote(vehicleId)
+        val pdfDir = File(cacheDir, "pdf").apply { mkdirs() }
+        val pdfFile = File(pdfDir, "vehicle_report_$vehicleId.pdf")
+        val document = PdfDocument()
+        try {
+            val pageWidth = 595
+            val pageHeight = 842
+            val contentWidth = pageWidth - 72
+            val titlePaint = android.text.TextPaint().apply {
+                textSize = 19f
+                isFakeBoldText = true
+                color = Color.WHITE
+                textAlign = android.graphics.Paint.Align.CENTER
             }
-            startActivity(Intent.createChooser(shareIntent, "مشاركة فاتورة PDF"))
-        } catch (_: Exception) {
-            toast("تعذر إنشاء ملف PDF؛ يمكنك استخدام الطباعة")
+            val sectionPaint = android.text.TextPaint().apply {
+                textSize = 13f
+                isFakeBoldText = true
+                color = Color.WHITE
+                textAlign = android.graphics.Paint.Align.CENTER
+            }
+            val bodyPaint = android.text.TextPaint().apply {
+                textSize = 12f
+                color = textDark
+            }
+            val totalPaint = android.text.TextPaint(bodyPaint).apply {
+                textSize = 13f
+                isFakeBoldText = true
+            }
+
+            var pageNumber = 0
+            var page: PdfDocument.Page? = null
+            var canvas: android.graphics.Canvas? = null
+            var y = 0f
+
+            fun startPage() {
+                pageNumber++
+                page = document.startPage(
+                    PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+                )
+                canvas = page?.canvas
+                val pageCanvas = canvas ?: throw IllegalStateException("تعذر إنشاء صفحة التقرير")
+                pageCanvas.drawColor(Color.rgb(248, 250, 252))
+                pageCanvas.drawRect(
+                    0f,
+                    0f,
+                    pageWidth.toFloat(),
+                    66f,
+                    android.graphics.Paint().apply { color = navyDark }
+                )
+                val titleLayout = StaticLayout.Builder.obtain(
+                    "تقرير السيارة والصيانة",
+                    0,
+                    "تقرير السيارة والصيانة".length,
+                    titlePaint,
+                    pageWidth - 48
+                )
+                    .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                    .setIncludePad(false)
+                    .build()
+                pageCanvas.save()
+                pageCanvas.translate(24f, 22f)
+                titleLayout.draw(pageCanvas)
+                pageCanvas.restore()
+                y = 88f
+            }
+
+            fun finishPage() {
+                page?.let { document.finishPage(it) }
+                page = null
+                canvas = null
+            }
+
+            fun ensureSpace(height: Float) {
+                if (y + height <= pageHeight - 48f) return
+                finishPage()
+                startPage()
+            }
+
+            fun drawTextBlock(text: String, paint: android.text.TextPaint = bodyPaint) {
+                val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, contentWidth)
+                    .setAlignment(Layout.Alignment.ALIGN_OPPOSITE)
+                    .setIncludePad(false)
+                    .build()
+                var startLine = 0
+                while (startLine < layout.lineCount) {
+                    ensureSpace(20f)
+                    val availableHeight = pageHeight - 48f - y
+                    val top = layout.getLineTop(startLine)
+                    var endLine = startLine
+                    while (endLine + 1 < layout.lineCount &&
+                        layout.getLineBottom(endLine + 1) - top <= availableHeight
+                    ) {
+                        endLine++
+                    }
+                    val bottom = layout.getLineBottom(endLine)
+                    val pageCanvas = canvas ?: throw IllegalStateException("صفحة التقرير غير جاهزة")
+                    pageCanvas.save()
+                    pageCanvas.translate(36f, y - top)
+                    pageCanvas.clipRect(0f, top, contentWidth.toFloat(), bottom.toFloat())
+                    layout.draw(pageCanvas)
+                    pageCanvas.restore()
+                    y += bottom - top + 8f
+                    startLine = endLine + 1
+                }
+            }
+
+            fun drawSection(title: String) {
+                ensureSpace(34f)
+                val pageCanvas = canvas ?: throw IllegalStateException("صفحة التقرير غير جاهزة")
+                pageCanvas.drawRoundRect(
+                    36f,
+                    y,
+                    (pageWidth - 36).toFloat(),
+                    y + 26f,
+                    7f,
+                    7f,
+                    android.graphics.Paint().apply { color = teal }
+                )
+                val titleLayout = StaticLayout.Builder.obtain(
+                    title,
+                    0,
+                    title.length,
+                    sectionPaint,
+                    contentWidth
+                )
+                    .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                    .setIncludePad(false)
+                    .build()
+                pageCanvas.save()
+                pageCanvas.translate(36f, y + (26f - titleLayout.height) / 2f)
+                titleLayout.draw(pageCanvas)
+                pageCanvas.restore()
+                y += 34f
+            }
+
+            startPage()
+            drawSection("بيانات السيارة والعميل")
+            drawTextBlock("السيارة: ${vehicle.make} ${vehicle.model} (${vehicle.year})")
+            drawTextBlock("اللوحة: ${vehicle.plate.ifBlank { "-" }}    رقم الهيكل: ${vehicle.vin}")
+            drawTextBlock("العميل: ${vehicle.ownerName}    الهاتف: ${vehicle.ownerPhone}")
+            drawTextBlock("قراءة العداد الحالية: ${vehicle.odometer}")
+
+            drawSection("ملخص سجل الصيانة")
+            drawTextBlock("عدد أوامر الإصلاح: ${orders.size}", totalPaint)
+            drawTextBlock("إجمالي الفواتير: ${formatMoney(orders.sumOf { it.totalCost })}")
+            drawTextBlock("إجمالي المدفوع: ${formatMoney(orders.sumOf { it.paidAmount })}")
+            drawTextBlock("إجمالي المتبقي: ${formatMoney(orders.sumOf { it.remainingAmount })}")
+
+            if (customerNote.isNotBlank()) {
+                drawSection("ملاحظات وتوصيات للعميل")
+                drawTextBlock(customerNote)
+            }
+
+            drawSection("سجل أوامر الشغل")
+            if (orders.isEmpty()) {
+                drawTextBlock("لا توجد أوامر إصلاح مسجلة لهذه السيارة.")
+            } else {
+                orders.forEach { order ->
+                    drawSection("أمر #${order.id} — ${order.status} — ${order.createdAt}")
+                    drawTextBlock("الشكوى: ${order.complaint.ifBlank { "-" }}")
+                    drawTextBlock("التشخيص: ${order.diagnosis.ifBlank { "-" }}")
+                    drawTextBlock("الأعمال المنفذة: ${order.repairNotes.ifBlank { "-" }}")
+                    drawTextBlock("الفني: ${order.technicianName.ifBlank { "-" }}")
+                    drawTextBlock(
+                        "الإجمالي: ${formatMoney(order.totalCost)} | " +
+                            "المدفوع: ${formatMoney(order.paidAmount)} | " +
+                            "المتبقي: ${formatMoney(order.remainingAmount)}",
+                        totalPaint
+                    )
+                }
+            }
+
+            finishPage()
+            FileOutputStream(pdfFile).use { output -> document.writeTo(output) }
+            return pdfFile
+        } finally {
+            document.close()
         }
     }
 
     private fun formatMoney(value: Double): String =
         String.format(java.util.Locale("ar"), "%,.2f", value)
 
-    private fun printPlainText(jobName: String, text: String) {
+    private fun printInvoicePdf(wo: WorkOrderRecord) {
         try {
-            val printManager = getSystemService(Context.PRINT_SERVICE) as? PrintManager
-            if (printManager == null) {
-                toast("خدمة الطباعة غير متوفرة؛ استخدم المشاركة")
-                return
-            }
-            val adapter = object : android.print.PrintDocumentAdapter() {
-                override fun onLayout(
-                    oldAttributes: PrintAttributes?,
-                    newAttributes: PrintAttributes?,
-                    cancellationSignal: android.os.CancellationSignal?,
-                    callback: LayoutResultCallback?,
-                    extras: Bundle?
-                ) {
-                    val info = android.print.PrintDocumentInfo.Builder("$jobName.pdf")
-                        .setContentType(android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
-                        .build()
-                    callback?.onLayoutFinished(info, true)
-                }
-
-                override fun onWrite(
-                    pages: Array<out android.print.PageRange>?,
-                    destination: android.os.ParcelFileDescriptor?,
-                    cancellationSignal: android.os.CancellationSignal?,
-                    callback: WriteResultCallback?
-                ) {
-                    val pdfDocument = android.graphics.pdf.PdfDocument()
-                    val pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, 1).create()
-                    val page = pdfDocument.startPage(pageInfo)
-                    val paint = android.graphics.Paint().apply {
-                        textSize = 12f
-                        color = Color.BLACK
-                    }
-                    var y = 48f
-                    text.lines().forEach { line ->
-                        page.canvas.drawText(line, 36f, y, paint)
-                        y += 20f
-                    }
-                    pdfDocument.finishPage(page)
-                    destination?.fileDescriptor?.let { fd ->
-                        FileOutputStream(fd).use { out -> pdfDocument.writeTo(out) }
-                    }
-                    pdfDocument.close()
-                    callback?.onWriteFinished(arrayOf(android.print.PageRange.ALL_PAGES))
-                }
-            }
-            printManager.print(jobName, adapter, PrintAttributes.Builder().build())
-        } catch (_: Exception) {
-            toast("تعذر تشغيل الطباعة؛ يمكنك مشاركة الفاتورة مباشرة")
+            printPdfFile(createInvoicePdf(wo), "Invoice_WO_${wo.id}")
+        } catch (e: Exception) {
+            toast("تعذر تشغيل طباعة الفاتورة: ${e.message ?: "يمكنك مشاركة ملف PDF"}")
         }
+    }
+
+    private fun printPdfFile(pdfFile: File, jobName: String) {
+        val printManager = getSystemService(Context.PRINT_SERVICE) as? PrintManager
+        if (printManager == null) {
+            toast("خدمة الطباعة غير متوفرة؛ يمكنك مشاركة ملف PDF")
+            return
+        }
+        val adapter = object : android.print.PrintDocumentAdapter() {
+            override fun onLayout(
+                oldAttributes: PrintAttributes?,
+                newAttributes: PrintAttributes?,
+                cancellationSignal: android.os.CancellationSignal?,
+                callback: LayoutResultCallback?,
+                extras: Bundle?
+            ) {
+                if (cancellationSignal?.isCanceled == true) {
+                    callback?.onLayoutCancelled()
+                    return
+                }
+                val info = android.print.PrintDocumentInfo.Builder("$jobName.pdf")
+                    .setContentType(android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                    .setPageCount(android.print.PrintDocumentInfo.PAGE_COUNT_UNKNOWN)
+                    .build()
+                callback?.onLayoutFinished(info, true)
+            }
+
+            override fun onWrite(
+                pages: Array<out android.print.PageRange>?,
+                destination: android.os.ParcelFileDescriptor?,
+                cancellationSignal: android.os.CancellationSignal?,
+                callback: WriteResultCallback?
+            ) {
+                if (cancellationSignal?.isCanceled == true) {
+                    callback?.onWriteCancelled()
+                    return
+                }
+                if (destination == null) {
+                    callback?.onWriteFailed("تعذر إنشاء ملف الطباعة")
+                    return
+                }
+                try {
+                    FileInputStream(pdfFile).use { input ->
+                        android.os.ParcelFileDescriptor.AutoCloseOutputStream(destination).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    callback?.onWriteFinished(arrayOf(android.print.PageRange.ALL_PAGES))
+                } catch (e: Exception) {
+                    callback?.onWriteFailed(e.message ?: "تعذر كتابة ملف الطباعة")
+                }
+            }
+        }
+        printManager.print(jobName, adapter, PrintAttributes.Builder().build())
     }
 
     // ---------------------------------------------------------
@@ -2004,6 +2275,12 @@ class MainActivity : Activity() {
 
         val summaryCard = createCard("ملخص التقرير اليومي", navyDark)
         val debtCard = createCard("أكبر الديون المستحقة", warnAmber)
+        if (db.hasPermission("vehicles", "view")) {
+            val vehicleReportCard = createCard("تقارير السيارات والفوترة", gold)
+            addPrimaryButton("عرض تقارير السيارات وإعادة الفوترة", vehicleReportCard, gold) {
+                navigateTo(Screen.VEHICLE_REPORTS)
+            }
+        }
 
         fun loadReportFor(dateStr: String) {
             val clean = dateStr.trim().ifBlank { WorkshopDb.todayString() }
@@ -2059,6 +2336,201 @@ class MainActivity : Activity() {
 
         addPrimaryButton("عرض تقرير التاريخ", dateCard, teal) { loadReportFor(dateInput.text.toString()) }
         loadReportFor(initialDate)
+    }
+
+    private fun vehicleReportsScreen() {
+        if (!allowed("vehicles", "view") || !allowed("work_orders", "view")) return
+        page("تقارير السيارات والفوترة", "سجل الإصلاحات والفواتير لكل سيارة", showBack = true)
+
+        val searchCard = createCard("البحث عن سيارة", teal)
+        val queryInput = field("الماركة، الموديل، اللوحة، VIN، أو اسم المالك")
+        searchCard.addView(queryInput, matchWidth().apply { setMargins(0, 0, 0, dp(6)) })
+        val resultsCard = createCard("السيارات وتقاريرها", navyDark)
+        val vehicles = db.getAllVehicles(limit = 500)
+        val ordersByVehicle = db.getAllWorkOrders(limit = 2000).groupBy { it.vehicleId }
+
+        val renderVehicles: () -> Unit = {
+            val query = queryInput.text.toString().trim()
+            val matches = if (query.isBlank()) {
+                vehicles
+            } else {
+                (
+                    vehicles.filter { vehicle ->
+                        "${vehicle.make} ${vehicle.model} ${vehicle.plate} ${vehicle.vin} ${vehicle.ownerName} ${vehicle.ownerPhone}"
+                            .contains(query, ignoreCase = true)
+                    } + db.searchVehicles(query)
+                ).distinctBy { it.id }
+            }
+            resultsCard.removeAllViewsInLayout()
+            if (matches.isEmpty()) {
+                addText(
+                    if (vehicles.isEmpty()) "لا توجد سيارات مسجلة." else "لا توجد سيارات مطابقة للبحث.",
+                    13.5f,
+                    textMuted,
+                    false,
+                    resultsCard
+                )
+            } else {
+                matches.forEach { vehicle ->
+                    val vehicleOrders = ordersByVehicle[vehicle.id].orEmpty()
+                    val totalBilled = vehicleOrders.sumOf { it.totalCost }
+                    val totalPaid = vehicleOrders.sumOf { it.paidAmount }
+                    val totalDebt = vehicleOrders.sumOf { it.remainingAmount }
+                    val item = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(dp(10), dp(10), dp(10), dp(10))
+                        background = GradientDrawable().apply {
+                            setColor(bgLight)
+                            cornerRadius = dp(12).toFloat()
+                            setStroke(dp(1), borderLight)
+                        }
+                    }
+                    addText(
+                        "${vehicle.make} ${vehicle.model} ${vehicle.year}\n" +
+                            "اللوحة: ${vehicle.plate.ifBlank { "-" }}  |  المالك: ${vehicle.ownerName}\n" +
+                            "أوامر الإصلاح: ${vehicleOrders.size}  |  المفوتر: ${formatMoney(totalBilled)}\n" +
+                            "المدفوع: ${formatMoney(totalPaid)}  |  المتبقي: ${formatMoney(totalDebt)}",
+                        13.5f,
+                        textDark,
+                        true,
+                        item
+                    )
+                    addPrimaryButton("عرض التقرير وإعادة طباعة الفواتير", item, teal) {
+                        openVehicleReport(vehicle.id)
+                    }
+                    resultsCard.addView(item, matchWidth().apply { setMargins(0, dp(4), 0, dp(8)) })
+                }
+            }
+        }
+
+        val searchAction = { renderVehicles() }
+        attachSmartKeyboardNavigation(listOf(queryInput), contentScroll, searchAction)
+        addPrimaryButton("بحث", searchCard, teal, searchAction)
+        renderVehicles()
+    }
+
+    private fun openVehicleReport(vehicleId: Long) {
+        selectedReportVehicleId = vehicleId
+        navigateTo(Screen.VEHICLE_REPORT_DETAIL)
+    }
+
+    private fun vehicleReportScreen(vehicleId: Long) {
+        if (!allowed("vehicles", "view") || !allowed("work_orders", "view")) return
+        val vehicle = db.getVehicleProfile(vehicleId) ?: run {
+            toast("تعذر تحميل بيانات السيارة")
+            navigateTo(Screen.VEHICLE_REPORTS)
+            return
+        }
+        val orders = db.getAllWorkOrders(limit = 2000).filter { it.vehicleId == vehicleId }
+        val billed = orders.sumOf { it.totalCost }
+        val paid = orders.sumOf { it.paidAmount }
+        val debt = orders.sumOf { it.remainingAmount }
+        val customerNote = db.getVehicleReportNote(vehicleId)
+
+        page("تقرير السيارة", "${vehicle.make} ${vehicle.model} — ${vehicle.plate}", showBack = true)
+        val vehicleCard = createCard("بيانات السيارة والعميل", navyDark)
+        addText(
+            "السيارة: ${vehicle.make} ${vehicle.model} (${vehicle.year})\n" +
+                "اللوحة: ${vehicle.plate.ifBlank { "-" }}  |  VIN: ${vehicle.vin}\n" +
+                "المالك: ${vehicle.ownerName} (${vehicle.ownerPhone})\n" +
+                "قراءة العداد الحالية: ${vehicle.odometer}",
+            14f,
+            textDark,
+            true,
+            vehicleCard
+        )
+
+        val summaryCard = createCard("ملخص سجل الصيانة", teal)
+        addText(
+            "عدد أوامر الإصلاح: ${orders.size}\n" +
+                "إجمالي الفواتير: ${formatMoney(billed)}\n" +
+                "إجمالي المدفوع: ${formatMoney(paid)}\n" +
+                "إجمالي المتبقي: ${formatMoney(debt)}",
+            14f,
+            textDark,
+            true,
+            summaryCard
+        )
+
+        val printCard = createCard("تقرير العميل", gold)
+        addPrimaryButton("طباعة تقرير السيارة PDF", printCard, teal) {
+            printVehicleReportPdf(vehicleId)
+        }
+        addSecondaryButton("مشاركة تقرير السيارة PDF", printCard) {
+            shareVehicleReportPdf(vehicleId)
+        }
+
+        val noteCard = createCard("ملاحظات العرض للعميل", navyDark)
+        addText(
+            customerNote.ifBlank { "لا توجد ملاحظات مخصصة لهذا التقرير." },
+            13.5f,
+            if (customerNote.isBlank()) textMuted else textDark,
+            false,
+            noteCard
+        )
+        if (db.hasPermission("work_orders", "edit")) {
+            addSecondaryButton("تحرير ملاحظات تقرير العميل", noteCard) {
+                editVehicleReportNote(vehicleId)
+            }
+        }
+
+        val historyCard = createCard("سجل أوامر الشغل", navyDark)
+        if (orders.isEmpty()) {
+            addText("لا توجد أوامر إصلاح مسجلة لهذه السيارة.", 13.5f, textMuted, false, historyCard)
+            return
+        }
+        orders.forEach { order ->
+            val orderCard = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                background = GradientDrawable().apply {
+                    setColor(bgLight)
+                    cornerRadius = dp(12).toFloat()
+                    setStroke(dp(1), borderLight)
+                }
+            }
+            addStatusBadge(order.status, orderCard)
+            addText(
+                "أمر #${order.id} — ${order.createdAt}\n" +
+                    "الشكوى: ${order.complaint.ifBlank { "-" }}\n" +
+                    "التشخيص: ${order.diagnosis.ifBlank { "-" }}\n" +
+                    "الأعمال المنفذة: ${order.repairNotes.ifBlank { "-" }}\n" +
+                    "الفني: ${order.technicianName.ifBlank { "-" }}\n" +
+                    "الإجمالي: ${formatMoney(order.totalCost)}  |  المدفوع: ${formatMoney(order.paidAmount)}  |  المتبقي: ${formatMoney(order.remainingAmount)}",
+                13.5f,
+                textDark,
+                false,
+                orderCard
+            )
+            if (db.hasPermission("work_orders", "edit")) {
+                addSecondaryButton("تحرير بيانات أمر الشغل الأصلية", orderCard) {
+                    editWorkOrderDialog(order) { vehicleReportScreen(vehicleId) }
+                }
+            }
+            addPrimaryButton("إصدار / إعادة طباعة فاتورة الأمر #${order.id}", orderCard, navyDark) {
+                shareOrPrintInvoice(order)
+            }
+            historyCard.addView(orderCard, matchWidth().apply { setMargins(0, dp(4), 0, dp(8)) })
+        }
+    }
+
+    private fun editVehicleReportNote(vehicleId: Long) {
+        if (!allowed("work_orders", "edit")) return
+        val noteInput = field("ملاحظات وتوصيات للعميل", "multiline").apply {
+            setText(db.getVehicleReportNote(vehicleId))
+        }
+        formDialog("تحرير تقرير العميل", listOf(noteInput), listOf(noteInput)) { dialog ->
+            try {
+                if (!db.saveVehicleReportNote(vehicleId, noteInput.text.toString())) {
+                    throw IllegalStateException("تعذر حفظ ملاحظات التقرير")
+                }
+                dialog.dismiss()
+                toast("تم حفظ ملاحظات تقرير العميل")
+                vehicleReportScreen(vehicleId)
+            } catch (e: Exception) {
+                toast(e.message ?: "تعذر حفظ ملاحظات التقرير")
+            }
+        }
     }
 
     // ---------------------------------------------------------
@@ -2266,16 +2738,14 @@ class MainActivity : Activity() {
 
     private fun ownershipConflict(newCustomerId: Long, vehicleId: Long) {
         val vehicle = db.getVehicleProfile(vehicleId) ?: return
-        AlertDialog.Builder(this)
-            .setTitle("تعارض في الملكية")
-            .setMessage("السيارة مسجلة حالياً باسم: ${vehicle.ownerName}\nلن يتم تغيير الملكية تلقائياً.")
-            .setItems(arrayOf("الإبقاء على المالك الحالي", "نقل الملكية إلى العميل الجديد", "إلغاء")) { _, which ->
-                when (which) {
-                    0 -> receptionChoices(vehicle.customerId, vehicleId)
-                    1 -> transferOwnershipDialog(vehicleId, newCustomerId)
-                }
-            }
-            .show()
+        showMessageWithActions(
+            "تعارض في الملكية",
+            "السيارة مسجلة حالياً باسم: ${vehicle.ownerName}\nلن يتم تغيير الملكية تلقائياً.",
+            listOf(
+                "الإبقاء على المالك الحالي" to { receptionChoices(vehicle.customerId, vehicleId) },
+                "نقل الملكية إلى العميل الجديد" to { transferOwnershipDialog(vehicleId, newCustomerId) }
+            )
+        )
     }
 
     private fun transferOwnershipDialog(vehicleId: Long, newCustomerId: Long? = null, currentOwnerId: Long? = null) {

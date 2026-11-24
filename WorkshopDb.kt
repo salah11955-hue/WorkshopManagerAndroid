@@ -237,7 +237,7 @@ data class CustomerDebtEntry(
 )
 
 class WorkshopDb(private val appContext: Context) :
-    SQLiteOpenHelper(appContext, "workshop.db", null, 8) {
+    SQLiteOpenHelper(appContext, "workshop.db", null, 9) {
 
     @Volatile
     private var activeUserId: Long? = null
@@ -261,6 +261,7 @@ class WorkshopDb(private val appContext: Context) :
         createPermissionsTable(db)
         createWorkOrderPhotosTable(db)
         createWorkshopExtensionTables(db)
+        createVehicleReportNotesTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -307,6 +308,20 @@ class WorkshopDb(private val appContext: Context) :
         if (oldVersion < 8) {
             createWorkshopExtensionTables(db)
         }
+        if (oldVersion < 9) {
+            createVehicleReportNotesTable(db)
+        }
+    }
+
+    private fun createVehicleReportNotesTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS vehicle_report_notes (
+                vehicle_id INTEGER PRIMARY KEY,
+                customer_note TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                FOREIGN KEY(vehicle_id) REFERENCES vehicles(id) ON DELETE CASCADE
+            )"""
+        )
     }
 
 private fun createWorkshopExtensionTables(db: SQLiteDatabase) {
@@ -1360,7 +1375,7 @@ fun getWorkOrderPhotos(
         }
     }
 
-    private fun mapVehicleRow(c: android.database.Cursor): VehicleProfile {
+    private fun mapVehicleRow(c: android.database.Cursor, includePhotos: Boolean = true): VehicleProfile {
         val id = c.getLong(0)
         return VehicleProfile(
             id = id,
@@ -1380,7 +1395,7 @@ fun getWorkOrderPhotos(
             ownerPhone = c.getString(14) ?: "",
             carPhotoPath = c.getString(15) ?: "",
             fuelGaugePhotoPath = c.getString(16) ?: "",
-            photos = getVehiclePhotos(id)
+            photos = if (includePhotos) getVehiclePhotos(id) else emptyList()
         )
     }
 
@@ -1417,6 +1432,52 @@ fun getWorkOrderPhotos(
             while (c.moveToNext()) out += mapVehicleRow(c)
         }
         return out
+    }
+
+    fun getAllVehicles(limit: Int = 200): List<VehicleProfile> {
+        val out = mutableListOf<VehicleProfile>()
+        val sql = """
+            SELECT
+                v.id, v.customer_id, v.make, v.model, v.model_year, v.engine,
+                v.color, v.fuel_type, v.transmission, v.plate, v.vin,
+                v.current_odometer, v.notes, c.name, c.phone,
+                v.car_photo_path, v.fuel_gauge_photo_path
+            FROM vehicles v
+            LEFT JOIN customers c ON c.id = v.customer_id
+            ORDER BY v.id DESC LIMIT ?
+        """.trimIndent()
+        readableDatabase.rawQuery(sql, arrayOf(limit.coerceAtLeast(1).toString())).use { c ->
+            while (c.moveToNext()) out += mapVehicleRow(c, includePhotos = false)
+        }
+        return out
+    }
+
+    fun getVehicleReportNote(vehicleId: Long): String {
+        readableDatabase.rawQuery(
+            "SELECT customer_note FROM vehicle_report_notes WHERE vehicle_id=? LIMIT 1",
+            arrayOf(vehicleId.toString())
+        ).use { cursor ->
+            return if (cursor.moveToFirst()) cursor.getString(0) ?: "" else ""
+        }
+    }
+
+    fun saveVehicleReportNote(vehicleId: Long, customerNote: String): Boolean {
+        check(hasPermission("work_orders", "edit")) {
+            "ليس لديك صلاحية تعديل تقرير العميل"
+        }
+        val inserted = writableDatabase.insertWithOnConflict(
+            "vehicle_report_notes",
+            null,
+            ContentValues().apply {
+                put("vehicle_id", vehicleId)
+                put("customer_note", customerNote.trim())
+                put("updated_at", todayStringWithTime())
+            },
+            SQLiteDatabase.CONFLICT_REPLACE
+        )
+        if (inserted == -1L) return false
+        logAudit("تحرير تقرير العميل", "vehicle", vehicleId, "تحديث النص المخصص للعميل")
+        return true
     }
 
     fun searchVehicles(query: String): List<VehicleProfile> {
@@ -1652,6 +1713,19 @@ fun getWorkOrderPhotos(
                 put("discount", disc)
                 put("expected_delivery", expectedDelivery.trim())
             },
+            "id=?",
+            arrayOf(workOrderId.toString())
+        ) == 1
+    }
+
+    fun setWorkOrderStatus(workOrderId: Long, status: String): Boolean {
+        check(hasPermission("work_orders", "edit")) { "ليس لديك صلاحية تحديث حالة أمر الإصلاح" }
+        require(status in setOf("مفتوح", "قيد الإصلاح", "قيد العمل", "مكتمل")) {
+            "حالة أمر الإصلاح غير صحيحة"
+        }
+        return writableDatabase.update(
+            "work_orders",
+            ContentValues().apply { put("status", status) },
             "id=?",
             arrayOf(workOrderId.toString())
         ) == 1
@@ -2313,6 +2387,23 @@ fun getWorkOrderPhotos(
             }
         }
         rootObj.put("vehicles", vehiclesArr)
+
+        val vehicleReportNotesArr = JSONArray()
+        readableDatabase.rawQuery(
+            "SELECT vehicle_id, customer_note, updated_at FROM vehicle_report_notes ORDER BY vehicle_id",
+            null
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                vehicleReportNotesArr.put(
+                    JSONObject().apply {
+                        put("vehicle_id", cursor.getLong(0))
+                        put("customer_note", cursor.getString(1) ?: "")
+                        put("updated_at", cursor.getString(2) ?: "")
+                    }
+                )
+            }
+        }
+        rootObj.put("vehicle_report_notes", vehicleReportNotesArr)
 
         val woArr = JSONArray()
         getAllWorkOrders(limit = 2000).forEach { w ->
