@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.database.sqlite.SQLiteException
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -11,6 +12,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -174,8 +176,8 @@ class MainActivity : Activity() {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.WHITE)
-            elevation = dp(12).toFloat()
-            setPadding(dp(6), dp(7), dp(6), dp(8))
+            elevation = dp(10).toFloat()
+            setPadding(dp(6), dp(8), dp(6), dp(8))
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
 
@@ -193,11 +195,18 @@ class MainActivity : Activity() {
             val tabBox = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setPadding(dp(2), dp(5), dp(2), dp(5))
-                background = GradientDrawable().apply {
-                    setColor(if (isSelected) teal else Color.TRANSPARENT)
-                    cornerRadius = dp(14).toFloat()
+                minimumHeight = dp(54)
+                setPadding(dp(2), dp(6), dp(2), dp(6))
+                val shape = GradientDrawable().apply {
+                    setColor(if (isSelected) Color.rgb(224, 247, 246) else Color.TRANSPARENT)
+                    cornerRadius = dp(16).toFloat()
+                    if (isSelected) setStroke(dp(1), Color.rgb(190, 235, 231))
                 }
+                background = RippleDrawable(
+                    ColorStateList.valueOf(Color.argb(32, 14, 165, 164)),
+                    shape,
+                    null
+                )
                 setOnClickListener {
                     if (loggedUser == null) {
                         toast("يرجى تسجيل الدخول أولاً")
@@ -218,7 +227,7 @@ class MainActivity : Activity() {
 
             val iconView = ImageView(this).apply {
                 setImageResource(icon)
-                setColorFilter(if (isSelected) Color.WHITE else Color.rgb(148, 163, 184))
+                setColorFilter(if (isSelected) tealDark else Color.rgb(100, 116, 139))
                 contentDescription = title
             }
             val labelTv = TextView(this).apply {
@@ -226,7 +235,7 @@ class MainActivity : Activity() {
                 textSize = 11f
                 gravity = Gravity.CENTER
                 typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                setTextColor(if (isSelected) navyDark else textMuted)
+                setTextColor(if (isSelected) tealDark else textMuted)
             }
             tabBox.addView(iconView, LinearLayout.LayoutParams(dp(22), dp(22)))
             tabBox.addView(labelTv, matchWidth())
@@ -391,34 +400,74 @@ class MainActivity : Activity() {
         val userBadgeText = loggedUser?.let { "${it.fullName} • ${it.role}" } ?: "خبراء هونداي وفورد"
 
         val headerCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(14))
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
             background = GradientDrawable().apply {
-                setColor(if (darkAuthBackground) navyCard else navyDark)
-                cornerRadius = dp(16).toFloat()
-                setStroke(dp(1), gold)
+                orientation = GradientDrawable.Orientation.TL_BR
+                colors = if (darkAuthBackground) {
+                    intArrayOf(navyCard, navyDark)
+                } else {
+                    intArrayOf(Color.rgb(20, 52, 74), navyDark)
+                }
+                cornerRadius = dp(22).toFloat()
             }
+            elevation = dp(4).toFloat()
         }
 
+        val brandIcon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_nav_build)
+            setColorFilter(gold)
+            contentDescription = "رمز الورشة"
+            background = GradientDrawable().apply {
+                setColor(Color.argb(35, 255, 255, 255))
+                cornerRadius = dp(16).toFloat()
+            }
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+        }
+        headerCard.addView(
+            brandIcon,
+            LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+                setMargins(0, 0, dp(12), 0)
+            }
+        )
+
+        val headerText = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val brandNameTv = TextView(this).apply {
+            text = "خبراء هونداي وفورد"
+            textSize = 12f
+            setTextColor(Color.rgb(181, 222, 218))
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.START
+        }
         val appTitleTv = TextView(this).apply {
-            text = "خبراء هونداي وفورد — $title"
-            textSize = 18.5f
+            text = title
+            textSize = 19f
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
+            gravity = Gravity.START
+            setPadding(0, dp(2), 0, 0)
         }
-        headerCard.addView(appTitleTv, matchWidth())
-
         val userInfoTv = TextView(this).apply {
             text = if (subtitle.isNotBlank()) "$userBadgeText  |  $subtitle" else userBadgeText
-            textSize = 12.5f
-            setTextColor(Color.rgb(245, 208, 120))
-            gravity = Gravity.CENTER
-            setPadding(0, dp(5), 0, 0)
+            textSize = 11.5f
+            setTextColor(Color.rgb(203, 213, 225))
+            gravity = Gravity.START
+            setPadding(0, dp(3), 0, 0)
         }
-        headerCard.addView(userInfoTv, matchWidth())
+        headerText.addView(brandNameTv, matchWidth())
+        headerText.addView(appTitleTv, matchWidth())
+        headerText.addView(userInfoTv, matchWidth())
+        headerCard.addView(
+            headerText,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
 
-        root.addView(headerCard, matchWidth().apply { setMargins(0, 0, 0, dp(12)) })
+        root.addView(headerCard, matchWidth().apply { setMargins(0, 0, 0, dp(16)) })
 
         if (showBack && screenStack.size > 1) {
             addSecondaryButton("← رجوع للصفحة السابقة") {
@@ -437,9 +486,9 @@ class MainActivity : Activity() {
             background = GradientDrawable().apply {
                 setColor(cardBackground)
                 cornerRadius = dp(18).toFloat()
-                setStroke(dp(1), if (cardBackground == dangerRed) dangerDark else borderLight)
+                setStroke(dp(1), if (cardBackground == dangerRed) dangerDark else Color.rgb(232, 237, 243))
             }
-            elevation = dp(3).toFloat()
+            elevation = dp(2).toFloat()
         }
 
         val titleTv = TextView(this).apply {
