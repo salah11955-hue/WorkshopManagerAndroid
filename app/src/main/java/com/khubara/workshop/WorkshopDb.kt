@@ -1213,6 +1213,26 @@ fun getWorkOrderPhotos(
     return result
 }
 
+    fun getAllWorkOrderPhotos(): List<WorkOrderPhotoItem> {
+        val result = mutableListOf<WorkOrderPhotoItem>()
+        readableDatabase.rawQuery(
+            """SELECT id, work_order_id, label, photo_path, created_at
+               FROM work_order_photos ORDER BY id DESC""",
+            null
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += WorkOrderPhotoItem(
+                    id = cursor.getLong(0),
+                    workOrderId = cursor.getLong(1),
+                    label = cursor.getString(2) ?: "",
+                    photoPath = cursor.getString(3) ?: "",
+                    createdAt = cursor.getString(4) ?: ""
+                )
+            }
+        }
+        return result
+    }
+
     fun addCustomerAndVehicle(
         name: String,
         phone: String,
@@ -1341,6 +1361,26 @@ fun getWorkOrderPhotos(
                     label = c.getString(2) ?: "صورة سيارة",
                     photoPath = c.getString(3) ?: "",
                     createdAt = c.getString(4) ?: ""
+                )
+            }
+        }
+        return out
+    }
+
+    fun getAllVehiclePhotos(): List<VehiclePhotoItem> {
+        val out = mutableListOf<VehiclePhotoItem>()
+        readableDatabase.rawQuery(
+            """SELECT id, vehicle_id, label, photo_path, created_at
+               FROM vehicle_photos ORDER BY id DESC""",
+            null
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                out += VehiclePhotoItem(
+                    id = cursor.getLong(0),
+                    vehicleId = cursor.getLong(1),
+                    label = cursor.getString(2) ?: "صورة سيارة",
+                    photoPath = cursor.getString(3) ?: "",
+                    createdAt = cursor.getString(4) ?: ""
                 )
             }
         }

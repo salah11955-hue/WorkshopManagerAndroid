@@ -14,6 +14,8 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.MediaStore
@@ -56,6 +58,9 @@ class MainActivity : Activity() {
         REPORTS,
         VEHICLE_REPORTS,
         VEHICLE_REPORT_DETAIL,
+        SETTINGS,
+        PHOTO_GALLERY,
+        HUMAN_RESOURCES,
         USERS,
         PERMISSIONS
     }
@@ -66,6 +71,11 @@ class MainActivity : Activity() {
     private lateinit var bottomBar: LinearLayout
 
     private var loggedUser: AuthUser? = null
+    private val settingsPreferences by lazy {
+        getSharedPreferences("workshop_manager_settings", Context.MODE_PRIVATE)
+    }
+    private val inactivityHandler = Handler(Looper.getMainLooper())
+    private val inactivityLogoutRunnable = Runnable { scheduleInactivityLogout() }
     private var activeFormDialog: AlertDialog? = null
     private var activeFormScroll: ScrollView? = null
     private var activeFormSubmit: (() -> Unit)? = null
@@ -170,12 +180,12 @@ class MainActivity : Activity() {
         }
 
         val items = listOf(
-            Triple(Tab.HOME, "⌂", "الرئيسية"),
-            Triple(Tab.CUSTOMERS, "👤", "العملاء"),
-            Triple(Tab.VEHICLES, "🚗", "السيارات"),
-            Triple(Tab.WORK_ORDERS, "🛠", "أوامر"),
-            Triple(Tab.INVENTORY, "📦", "المخزون"),
-            Triple(Tab.MORE, "☰", "المزيد")
+            Triple(Tab.HOME, R.drawable.ic_nav_home, "الرئيسية"),
+            Triple(Tab.CUSTOMERS, R.drawable.ic_nav_person, "العملاء"),
+            Triple(Tab.VEHICLES, R.drawable.ic_nav_car, "السيارات"),
+            Triple(Tab.WORK_ORDERS, R.drawable.ic_nav_build, "أوامر"),
+            Triple(Tab.INVENTORY, R.drawable.ic_nav_inventory, "المخزون"),
+            Triple(Tab.MORE, R.drawable.ic_nav_menu, "المزيد")
         )
 
         items.forEach { (tab, icon, title) ->
@@ -206,11 +216,10 @@ class MainActivity : Activity() {
                 }
             }
 
-            val iconTv = TextView(this).apply {
-                text = icon
-                textSize = 14f
-                gravity = Gravity.CENTER
-                setTextColor(if (isSelected) Color.WHITE else Color.rgb(148, 163, 184))
+            val iconView = ImageView(this).apply {
+                setImageResource(icon)
+                setColorFilter(if (isSelected) Color.WHITE else Color.rgb(148, 163, 184))
+                contentDescription = title
             }
             val labelTv = TextView(this).apply {
                 text = title
@@ -219,7 +228,7 @@ class MainActivity : Activity() {
                 typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
                 setTextColor(if (isSelected) navyDark else textMuted)
             }
-            tabBox.addView(iconTv, matchWidth())
+            tabBox.addView(iconView, LinearLayout.LayoutParams(dp(22), dp(22)))
             tabBox.addView(labelTv, matchWidth())
 
             bar.addView(
@@ -265,9 +274,47 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        inactivityHandler.removeCallbacks(inactivityLogoutRunnable)
         super.onDestroy()
         activeFormDialog?.dismiss()
         db.close()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (loggedUser != null) scheduleInactivityLogout()
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        if (loggedUser != null) {
+            settingsPreferences.edit()
+                .putLong("last_activity_at", System.currentTimeMillis())
+                .apply()
+            scheduleInactivityLogout()
+        }
+    }
+
+    private fun beginAuthenticatedSession() {
+        settingsPreferences.edit()
+            .putLong("last_activity_at", System.currentTimeMillis())
+            .apply()
+        scheduleInactivityLogout()
+    }
+
+    private fun scheduleInactivityLogout() {
+        inactivityHandler.removeCallbacks(inactivityLogoutRunnable)
+        val minutes = settingsPreferences.getInt("logout_timeout_minutes", 15)
+        if (loggedUser == null || minutes <= 0) return
+
+        val timeoutMillis = minutes * 60_000L
+        val lastActivityAt = settingsPreferences.getLong("last_activity_at", System.currentTimeMillis())
+        val remainingMillis = timeoutMillis - (System.currentTimeMillis() - lastActivityAt)
+        if (remainingMillis <= 0L) {
+            logout()
+        } else {
+            inactivityHandler.postDelayed(inactivityLogoutRunnable, remainingMillis)
+        }
     }
 
     private fun navigateTo(screen: Screen, clearStack: Boolean = false) {
@@ -310,6 +357,9 @@ class MainActivity : Activity() {
             Screen.VEHICLE_REPORTS -> vehicleReportsScreen()
             Screen.VEHICLE_REPORT_DETAIL -> selectedReportVehicleId?.let(::vehicleReportScreen)
                 ?: vehicleReportsScreen()
+            Screen.SETTINGS -> settingsScreen()
+            Screen.PHOTO_GALLERY -> photoGalleryScreen()
+            Screen.HUMAN_RESOURCES -> humanResourcesScreen()
             Screen.USERS -> usersScreen()
             Screen.PERMISSIONS -> {
                 val target = selectedPermissionUser
@@ -744,7 +794,10 @@ class MainActivity : Activity() {
                 toast("كلمتا المرور غير متطابقتين")
             } else if (db.createAdmin(username.text.toString(), name.text.toString(), password.text.toString())) {
                 loggedUser = db.currentUser()
-                if (loggedUser != null) navigateTo(Screen.TAB_HOME, clearStack = true)
+                if (loggedUser != null) {
+                    beginAuthenticatedSession()
+                    navigateTo(Screen.TAB_HOME, clearStack = true)
+                }
                 else navigateTo(Screen.LOGIN, clearStack = true)
             } else {
                 toast("تعذر إنشاء الحساب")
@@ -777,6 +830,7 @@ class MainActivity : Activity() {
                 val user = db.currentUser()
                 if (user != null) {
                     loggedUser = user
+                    beginAuthenticatedSession()
                     navigateTo(Screen.TAB_HOME, clearStack = true)
                 } else {
                     db.clearActiveUser()
@@ -792,6 +846,8 @@ class MainActivity : Activity() {
     }
 
     private fun logout() {
+        inactivityHandler.removeCallbacks(inactivityLogoutRunnable)
+        settingsPreferences.edit().remove("last_activity_at").apply()
         db.clearActiveUser()
         loggedUser = null
         navigateTo(Screen.LOGIN, clearStack = true)
@@ -1166,7 +1222,12 @@ class MainActivity : Activity() {
             .setItems(labels) { _, idx ->
                 val chosenLabel = labels[idx]
                 pickOrCapturePhotos(chosenLabel) { savedPaths ->
-                    savedPaths.forEach { savedPath -> db.addVehiclePhoto(vehicleId, chosenLabel, savedPath) }
+                    val savedCount = savedPaths.count { savedPath ->
+                        db.addVehiclePhoto(vehicleId, chosenLabel, savedPath)
+                    }
+                    if (savedCount != savedPaths.size) {
+                        toast("تم حفظ $savedCount من أصل ${savedPaths.size} صورة")
+                    }
                     onDone()
                 }
             }
@@ -1324,13 +1385,12 @@ class MainActivity : Activity() {
         if (db.hasPermission("work_orders", "edit") || db.hasPermission("work_orders", "add")) {
             actions += "+ إضافة صورة لأمر الإصلاح" to {
                 pickOrCapturePhotos("صورة أمر الإصلاح") { savedPaths ->
-                    val savedAll = savedPaths.all { savedPath ->
+                    val savedCount = savedPaths.count { savedPath ->
                         db.addWorkOrderPhoto(workOrderId, "صورة من سجل الإصلاح", savedPath)
                     }
-                    if (savedAll) {
-                        toast("تم إضافة الصورة")
-                        workOrderDetailsDialog(workOrderId)
-                    } else toast("تعذر إضافة الصورة")
+                    if (savedCount == savedPaths.size) toast("تم إضافة ${savedCount} صورة")
+                    else toast("تم حفظ $savedCount من أصل ${savedPaths.size} صورة")
+                    workOrderDetailsDialog(workOrderId)
                 }
             }
         }
@@ -2154,14 +2214,75 @@ class MainActivity : Activity() {
         addSecondaryButton("الفروع وسجل التدقيق", toolsCard) { branchesAndAuditDialog() }
         addSecondaryButton("البحث المتقدم الشامل", toolsCard) { navigateTo(Screen.SEARCH) }
         addPrimaryButton("تصدير نسخة احتياطية ومشاركتها", toolsCard, navyDark) { exportAndShareBackup() }
+        addSecondaryButton("الإعدادات ومعرض الصور", toolsCard) { navigateTo(Screen.SETTINGS) }
 
         val acctCard = createCard("حسابي وإدارة المستخدمين", gold)
         addSecondaryButton("تعديل اسمي أو كلمة مروري", acctCard) { editOwnAccountDialog(user) }
         if (user.role == "مدير" || db.hasPermission("users", "view")) {
+            addPrimaryButton("الموارد البشرية", acctCard, teal) { navigateTo(Screen.HUMAN_RESOURCES) }
             addPrimaryButton("إدارة المستخدمين والصلاحيات", acctCard, navyDark) { navigateTo(Screen.USERS) }
         }
 
         addDangerButton("تسجيل الخروج", root) { logout() }
+    }
+
+    private fun settingsScreen() {
+        page("الإعدادات", "تفضيلات التطبيق والجلسة", showBack = true)
+
+        val languageCard = createCard("اللغة", teal)
+        addText("العربية هي اللغة المتاحة حالياً. سيضاف اختيار اللغة بعد اكتمال الترجمة.", 14f, textDark, false, languageCard)
+
+        val timeoutLabels = listOf("تعطيل الخروج التلقائي", "15 دقيقة", "30 دقيقة", "ساعة واحدة", "ساعتان")
+        val timeoutValues = listOf(0, 15, 30, 60, 120)
+        val selectedMinutes = settingsPreferences.getInt("logout_timeout_minutes", 15)
+        val selectedIndex = timeoutValues.indexOf(selectedMinutes).let { if (it >= 0) it else 1 }
+        val timeoutCard = createCard("تسجيل الخروج التلقائي", navyDark)
+        val timeoutSpinner = spinnerField(timeoutLabels, timeoutLabels[selectedIndex])
+        timeoutCard.addView(timeoutSpinner, matchWidth())
+        addPrimaryButton("حفظ مهلة الخروج", timeoutCard, teal) {
+            val newTimeout = timeoutValues.getOrNull(timeoutSpinner.selectedItemPosition)
+            if (newTimeout == null) {
+                toast("اختر مهلة صالحة")
+            } else {
+                settingsPreferences.edit().putInt("logout_timeout_minutes", newTimeout).apply()
+                scheduleInactivityLogout()
+                toast("تم حفظ الإعدادات")
+            }
+        }
+
+        val galleryCard = createCard("معرض الصور", gold)
+        addSecondaryButton("استعراض صور السيارات وأوامر الإصلاح", galleryCard) {
+            navigateTo(Screen.PHOTO_GALLERY)
+        }
+    }
+
+    private fun photoGalleryScreen() {
+        page("معرض الصور", "صور السيارات وأوامر الإصلاح", showBack = true)
+        val vehiclePhotos = if (db.hasPermission("vehicles", "view")) db.getAllVehiclePhotos() else emptyList()
+        val workOrderPhotos = if (db.hasPermission("work_orders", "view")) db.getAllWorkOrderPhotos() else emptyList()
+        val galleryCard = createCard("الصور المحفوظة (${vehiclePhotos.size + workOrderPhotos.size})", navyDark)
+
+        if (vehiclePhotos.isEmpty() && workOrderPhotos.isEmpty()) {
+            addText("لا توجد صور متاحة أو ليست لديك صلاحية عرضها.", 14f, textMuted, false, galleryCard)
+            return
+        }
+
+        vehiclePhotos.forEach { photo ->
+            addSecondaryButton(
+                "سيارة #${photo.vehicleId} — ${photo.label} (${photo.createdAt})",
+                galleryCard
+            ) {
+                showPhotoPreview(photo.label, photo.photoPath)
+            }
+        }
+        workOrderPhotos.forEach { photo ->
+            addSecondaryButton(
+                "أمر إصلاح #${photo.workOrderId} — ${photo.label} (${photo.createdAt})",
+                galleryCard
+            ) {
+                showPhotoPreview(photo.label, photo.photoPath)
+            }
+        }
     }
 
     private fun branchesAndAuditDialog() {
@@ -2826,13 +2947,23 @@ class MainActivity : Activity() {
             text = "إرفاق صورة السيارة"
             setTextColor(Color.WHITE)
             background = buttonBg(teal, teal, tealDark)
-            setOnClickListener { pickOrCapturePhotos("صورة السيارة") { carPhotos.addAll(it) } }
+            setOnClickListener {
+                pickOrCapturePhotos("صورة السيارة") {
+                    carPhotos.addAll(it)
+                    text = "إرفاق صورة السيارة (${carPhotos.size})"
+                }
+            }
         }
         val fuelPhotoBtn = Button(this).apply {
             text = "إرفاق صورة مؤشر الوقود"
             setTextColor(Color.WHITE)
             background = buttonBg(gold, gold, navyDark)
-            setOnClickListener { pickOrCapturePhotos("صورة مؤشر الوقود") { fuelPhotos.addAll(it) } }
+            setOnClickListener {
+                pickOrCapturePhotos("صورة مؤشر الوقود") {
+                    fuelPhotos.addAll(it)
+                    text = "إرفاق صورة مؤشر الوقود (${fuelPhotos.size})"
+                }
+            }
         }
 
         val textInputs = listOf(name, phone, alt, email, city, address, customerNotes, make, model, year, engine, color, plate, vin, odometer, vehicleNotes)
@@ -2858,10 +2989,17 @@ class MainActivity : Activity() {
             )
             if (res == null) toast("تعذر الحفظ. تحقق من رقم الهيكل وعدم تكرار البيانات")
             else {
-                carPhotos.drop(1).forEach { db.addVehiclePhoto(res.second, "صورة السيارة", it) }
-                fuelPhotos.drop(1).forEach { db.addVehiclePhoto(res.second, "صورة مؤشر الوقود", it) }
+                val additionalPhotos = carPhotos.drop(1).map {
+                    db.addVehiclePhoto(res.second, "صورة السيارة", it)
+                } + fuelPhotos.drop(1).map {
+                    db.addVehiclePhoto(res.second, "صورة مؤشر الوقود", it)
+                }
                 dialog.dismiss()
-                toast("تم التسجيل بنجاح")
+                if (additionalPhotos.any { !it }) {
+                    toast("تم تسجيل السيارة، لكن تعذر حفظ بعض الصور الإضافية")
+                } else {
+                    toast("تم التسجيل بنجاح")
+                }
                 receptionChoices(res.first, res.second)
             }
         }
@@ -2998,13 +3136,23 @@ class MainActivity : Activity() {
             text = "إرفاق صورة السيارة"
             setTextColor(Color.WHITE)
             background = buttonBg(teal, teal, tealDark)
-            setOnClickListener { pickOrCapturePhotos("صورة السيارة") { carPhotoPaths.addAll(it) } }
+            setOnClickListener {
+                pickOrCapturePhotos("صورة السيارة") {
+                    carPhotoPaths.addAll(it)
+                    text = "إرفاق صورة السيارة (${carPhotoPaths.size})"
+                }
+            }
         }
         val fuelPhotoBtn = Button(this).apply {
             text = "إرفاق صورة مؤشر الوقود"
             setTextColor(Color.WHITE)
             background = buttonBg(gold, gold, navyDark)
-            setOnClickListener { pickOrCapturePhotos("صورة مؤشر الوقود") { fuelPhotoPaths.addAll(it) } }
+            setOnClickListener {
+                pickOrCapturePhotos("صورة مؤشر الوقود") {
+                    fuelPhotoPaths.addAll(it)
+                    text = "إرفاق صورة مؤشر الوقود (${fuelPhotoPaths.size})"
+                }
+            }
         }
 
         // تنبيه فوري إذا رقم اللوحة مكرر
@@ -3035,10 +3183,17 @@ class MainActivity : Activity() {
                     engine.text.toString(), plate.text.toString(), vin.text.toString(), odometer.text.toString(),
                     notes.text.toString(), color.text.toString(), fuelSpinner.selectedItem.toString(), transSpinner.selectedItem.toString()
                 )
-                carPhotoPaths.forEach { db.addVehiclePhoto(vId, "صورة السيارة", it) }
-                fuelPhotoPaths.forEach { db.addVehiclePhoto(vId, "صورة مؤشر الوقود", it) }
+                val photoResults = carPhotoPaths.map {
+                    db.addVehiclePhoto(vId, "صورة السيارة", it)
+                } + fuelPhotoPaths.map {
+                    db.addVehiclePhoto(vId, "صورة مؤشر الوقود", it)
+                }
                 dialog.dismiss()
-                toast("تم حفظ السيارة")
+                if (photoResults.any { !it }) {
+                    toast("تم حفظ السيارة، لكن تعذر حفظ بعض الصور")
+                } else {
+                    toast("تم حفظ السيارة")
+                }
                 navigateTo(Screen.TAB_VEHICLES, clearStack = true)
             } catch (e: Exception) {
                 toast(e.message ?: "تعذر حفظ السيارة")
@@ -3133,11 +3288,15 @@ class MainActivity : Activity() {
                     prioritySpinner.selectedItem.toString(), techName.text.toString(),
                     discount.text.toString(), expectedDelivery.text.toString(), downPayment.text.toString()
                 )
-                workOrderPhotos.forEachIndexed { index, photoPath ->
+                val savedPhotoCount = workOrderPhotos.mapIndexed { index, photoPath ->
                     db.addWorkOrderPhoto(workOrderId, if (index == 0) "صورة عند الاستلام" else "صورة إضافية", photoPath)
-                }
+                }.count { it }
                 dialog.dismiss()
-                toast("تم إنشاء أمر الشغل")
+                if (savedPhotoCount == workOrderPhotos.size) {
+                    toast("تم إنشاء أمر الشغل")
+                } else {
+                    toast("تم إنشاء أمر الشغل، لكن تم حفظ $savedPhotoCount من أصل ${workOrderPhotos.size} صورة")
+                }
                 navigateTo(Screen.TAB_WORK_ORDERS, clearStack = true)
             } catch (e: Exception) {
                 toast(e.message ?: "تعذر حفظ أمر الشغل")
@@ -3303,6 +3462,43 @@ class MainActivity : Activity() {
                 renderScreen(screenStack.last())
             } else toast("تعذر تحديث الحساب")
         }
+    }
+
+    private fun humanResourcesScreen() {
+        val actor = db.currentUser() ?: run { navigateTo(Screen.LOGIN, clearStack = true); return }
+        if (actor.role != "مدير" && !db.hasPermission("users", "view")) {
+            toast("ليس لديك صلاحية عرض بيانات الموظفين")
+            return
+        }
+
+        page("الموارد البشرية", "الفنيون والاستقبال والمخزون وقطع الغيار", showBack = true)
+        val employees = db.listUsers().filter { it.role != "مدير" }
+        val groups = listOf(
+            "الفنيون" to setOf("فني"),
+            "موظفو الاستقبال" to setOf("موظف استقبال"),
+            "المخزون وقطع الغيار" to setOf("مخزن"),
+            "المحاسبة" to setOf("محاسب")
+        )
+
+        if (actor.role == "مدير" || db.hasPermission("users", "add")) {
+            val actionsCard = createCard("إجراءات الموظفين", teal)
+            addPrimaryButton("+ إضافة موظف", actionsCard, teal) { createUserForm() }
+        }
+
+        groups.forEach { (title, roles) ->
+            val groupEmployees = employees.filter { it.role in roles }
+            val groupCard = createCard("$title (${groupEmployees.size})", navyDark)
+            if (groupEmployees.isEmpty()) {
+                addText("لا يوجد موظفون مسجلون في هذا القسم.", 13f, textMuted, false, groupCard)
+            } else {
+                groupEmployees.forEach { employee ->
+                    addText("${employee.fullName} (@${employee.username})", 14f, textDark, true, groupCard)
+                    addSecondaryButton("خيارات الموظف", groupCard) { userActionsDialog(employee) }
+                }
+            }
+        }
+
+        addSecondaryButton("عرض المستخدمين والصلاحيات كاملة", root) { navigateTo(Screen.USERS) }
     }
 
     private fun usersScreen() {
