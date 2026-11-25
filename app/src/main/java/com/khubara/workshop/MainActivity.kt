@@ -78,7 +78,8 @@ class MainActivity : Activity() {
     private var lastBackupFile: File? = null
 
     private var pendingPhotoLabel: String = "صورة سيارة"
-    private var pendingPhotoCallback: ((String) -> Unit)? = null
+    private var pendingPhotoCallback: ((List<String>) -> Unit)? = null
+    private val pendingPhotoPaths = mutableListOf<String>()
 
     // الألوان العصرية الجديدة: كحلي داكن + تركوازي + ذهبي + خلفية فاتحة
     private val navyDark = Color.rgb(15, 23, 42)
@@ -1164,8 +1165,8 @@ class MainActivity : Activity() {
             .setTitle("اختر نوع الصورة")
             .setItems(labels) { _, idx ->
                 val chosenLabel = labels[idx]
-                pickOrCapturePhoto(chosenLabel) { savedPath ->
-                    db.addVehiclePhoto(vehicleId, chosenLabel, savedPath)
+                pickOrCapturePhotos(chosenLabel) { savedPaths ->
+                    savedPaths.forEach { savedPath -> db.addVehiclePhoto(vehicleId, chosenLabel, savedPath) }
                     onDone()
                 }
             }
@@ -1322,8 +1323,11 @@ class MainActivity : Activity() {
         }
         if (db.hasPermission("work_orders", "edit") || db.hasPermission("work_orders", "add")) {
             actions += "+ إضافة صورة لأمر الإصلاح" to {
-                pickOrCapturePhoto("صورة أمر الإصلاح") { savedPath ->
-                    if (db.addWorkOrderPhoto(workOrderId, "صورة من سجل الإصلاح", savedPath)) {
+                pickOrCapturePhotos("صورة أمر الإصلاح") { savedPaths ->
+                    val savedAll = savedPaths.all { savedPath ->
+                        db.addWorkOrderPhoto(workOrderId, "صورة من سجل الإصلاح", savedPath)
+                    }
+                    if (savedAll) {
                         toast("تم إضافة الصورة")
                         workOrderDetailsDialog(workOrderId)
                     } else toast("تعذر إضافة الصورة")
@@ -2815,20 +2819,20 @@ class MainActivity : Activity() {
 
         if (identifierValue.length == 17) vin.setText(identifierValue) else plate.setText(identifierValue)
 
-        var carPhoto = ""
-        var fuelPhoto = ""
+        val carPhotos = mutableListOf<String>()
+        val fuelPhotos = mutableListOf<String>()
 
         val carPhotoBtn = Button(this).apply {
             text = "إرفاق صورة السيارة"
             setTextColor(Color.WHITE)
             background = buttonBg(teal, teal, tealDark)
-            setOnClickListener { pickOrCapturePhoto("صورة السيارة") { carPhoto = it } }
+            setOnClickListener { pickOrCapturePhotos("صورة السيارة") { carPhotos.addAll(it) } }
         }
         val fuelPhotoBtn = Button(this).apply {
             text = "إرفاق صورة مؤشر الوقود"
             setTextColor(Color.WHITE)
             background = buttonBg(gold, gold, navyDark)
-            setOnClickListener { pickOrCapturePhoto("صورة مؤشر الوقود") { fuelPhoto = it } }
+            setOnClickListener { pickOrCapturePhotos("صورة مؤشر الوقود") { fuelPhotos.addAll(it) } }
         }
 
         val textInputs = listOf(name, phone, alt, email, city, address, customerNotes, make, model, year, engine, color, plate, vin, odometer, vehicleNotes)
@@ -2850,10 +2854,12 @@ class MainActivity : Activity() {
                 customerNotes.text.toString(), vehicleNotes.text.toString(),
                 email.text.toString(), city.text.toString(), custTypeSpinner.selectedItem.toString(),
                 color.text.toString(), fuelSpinner.selectedItem.toString(), transSpinner.selectedItem.toString(),
-                carPhoto, fuelPhoto
+                carPhotos.firstOrNull().orEmpty(), fuelPhotos.firstOrNull().orEmpty()
             )
             if (res == null) toast("تعذر الحفظ. تحقق من رقم الهيكل وعدم تكرار البيانات")
             else {
+                carPhotos.drop(1).forEach { db.addVehiclePhoto(res.second, "صورة السيارة", it) }
+                fuelPhotos.drop(1).forEach { db.addVehiclePhoto(res.second, "صورة مؤشر الوقود", it) }
                 dialog.dismiss()
                 toast("تم التسجيل بنجاح")
                 receptionChoices(res.first, res.second)
@@ -2985,20 +2991,20 @@ class MainActivity : Activity() {
         val odometer = field("قراءة العداد", "number")
         val notes = field("ملاحظات السيارة", "multiline")
 
-        var carPhotoPath = ""
-        var fuelPhotoPath = ""
+        val carPhotoPaths = mutableListOf<String>()
+        val fuelPhotoPaths = mutableListOf<String>()
 
         val carPhotoBtn = Button(this).apply {
             text = "إرفاق صورة السيارة"
             setTextColor(Color.WHITE)
             background = buttonBg(teal, teal, tealDark)
-            setOnClickListener { pickOrCapturePhoto("صورة السيارة") { carPhotoPath = it } }
+            setOnClickListener { pickOrCapturePhotos("صورة السيارة") { carPhotoPaths.addAll(it) } }
         }
         val fuelPhotoBtn = Button(this).apply {
             text = "إرفاق صورة مؤشر الوقود"
             setTextColor(Color.WHITE)
             background = buttonBg(gold, gold, navyDark)
-            setOnClickListener { pickOrCapturePhoto("صورة مؤشر الوقود") { fuelPhotoPath = it } }
+            setOnClickListener { pickOrCapturePhotos("صورة مؤشر الوقود") { fuelPhotoPaths.addAll(it) } }
         }
 
         // تنبيه فوري إذا رقم اللوحة مكرر
@@ -3029,8 +3035,8 @@ class MainActivity : Activity() {
                     engine.text.toString(), plate.text.toString(), vin.text.toString(), odometer.text.toString(),
                     notes.text.toString(), color.text.toString(), fuelSpinner.selectedItem.toString(), transSpinner.selectedItem.toString()
                 )
-                if (carPhotoPath.isNotBlank()) db.addVehiclePhoto(vId, "صورة السيارة", carPhotoPath)
-                if (fuelPhotoPath.isNotBlank()) db.addVehiclePhoto(vId, "صورة مؤشر الوقود", fuelPhotoPath)
+                carPhotoPaths.forEach { db.addVehiclePhoto(vId, "صورة السيارة", it) }
+                fuelPhotoPaths.forEach { db.addVehiclePhoto(vId, "صورة مؤشر الوقود", it) }
                 dialog.dismiss()
                 toast("تم حفظ السيارة")
                 navigateTo(Screen.TAB_VEHICLES, clearStack = true)
@@ -3099,8 +3105,8 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             background = buttonBg(gold, gold, navyDark)
             setOnClickListener {
-                pickOrCapturePhoto("صورة عند الاستلام") { savedPath ->
-                    workOrderPhotos += savedPath
+                pickOrCapturePhotos("صورة عند الاستلام") { savedPaths ->
+                    workOrderPhotos += savedPaths
                     text = "إرفاق صور عند الاستلام (${workOrderPhotos.size})"
                 }
             }
@@ -3449,15 +3455,20 @@ class MainActivity : Activity() {
     // الصور من المعرض والكاميرا ومعاينتها
     // ---------------------------------------------------------
 
-    private fun pickOrCapturePhoto(label: String, onSaved: (String) -> Unit) {
+    private fun pickOrCapturePhotos(label: String, onSaved: (List<String>) -> Unit) {
         pendingPhotoLabel = label
         pendingPhotoCallback = onSaved
+        pendingPhotoPaths.clear()
 
         AlertDialog.Builder(this)
             .setTitle(label)
             .setItems(arrayOf("اختيار من معرض الصور", "التقاط بالكاميرا")) { _, which ->
                 if (which == 0) {
-                    val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                        type = "image/*"
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                    }
                     @Suppress("DEPRECATION")
                     startActivityForResult(intent, REQ_PICK_PHOTO)
                 } else {
@@ -3465,10 +3476,15 @@ class MainActivity : Activity() {
                     if (intent.resolveActivity(packageManager) != null) {
                         @Suppress("DEPRECATION")
                         startActivityForResult(intent, REQ_CAPTURE_PHOTO)
-                    } else toast("تعذر فتح الكاميرا")
+                    } else {
+                        clearPendingPhotoSelection(deleteFiles = true)
+                        toast("تعذر فتح الكاميرا")
+                    }
                 }
             }
-            .setNegativeButton("إلغاء", null)
+            .setNegativeButton("إلغاء") { _, _ ->
+                clearPendingPhotoSelection(deleteFiles = true)
+            }
             .show()
     }
 
@@ -3476,53 +3492,141 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_PICK_PHOTO && requestCode != REQ_CAPTURE_PHOTO) return
         if (resultCode != RESULT_OK) {
-            pendingPhotoCallback = null
+            clearPendingPhotoSelection(deleteFiles = true)
             return
         }
-        val cb = pendingPhotoCallback ?: return
+        if (pendingPhotoCallback == null) return
 
-        val savedPath: String? = try {
+        val savedPaths = mutableListOf<String>()
+        try {
             val dir = File(filesDir, "vehicle_photos").apply { mkdirs() }
-            val out = File(dir, "img_${System.currentTimeMillis()}.jpg")
             when (requestCode) {
                 REQ_PICK_PHOTO -> {
-                    val uri: Uri? = data?.data
-                    if (uri == null) {
-                        null
+                    val clipData = data?.clipData
+                    val uris = if (clipData != null) {
+                        (0 until clipData.itemCount).map { clipData.getItemAt(it).uri }
                     } else {
-                        val copied = contentResolver.openInputStream(uri)?.use { inp ->
-                            FileOutputStream(out).use { fos -> inp.copyTo(fos) }
+                        listOfNotNull(data?.data)
+                    }
+                    if (uris.isEmpty()) throw IllegalArgumentException("لم يتم اختيار صور")
+                    uris.forEachIndexed { index, uri ->
+                        val out = File(dir, "img_${System.nanoTime()}_$index.jpg")
+                        val input = contentResolver.openInputStream(uri)
+                            ?: throw IllegalStateException("تعذر فتح ملف الصورة")
+                        input.use { stream ->
+                            FileOutputStream(out).use { output -> stream.copyTo(output) }
                         }
-                        if (copied != null) out.absolutePath else null
+                        savedPaths += out.absolutePath
                     }
                 }
                 REQ_CAPTURE_PHOTO -> {
                     @Suppress("DEPRECATION")
                     val bmp = data?.extras?.get("data") as? Bitmap
-                    if (bmp == null) {
-                        null
-                    } else {
-                        FileOutputStream(out).use { fos -> bmp.compress(Bitmap.CompressFormat.JPEG, 85, fos) }
-                        out.absolutePath
+                        ?: throw IllegalStateException("لم تُرجع الكاميرا صورة")
+                    val out = File(dir, "img_${System.nanoTime()}_camera.jpg")
+                    FileOutputStream(out).use { fos ->
+                        if (!bmp.compress(Bitmap.CompressFormat.JPEG, 85, fos)) {
+                            throw IllegalStateException("تعذر ضغط الصورة")
+                        }
                     }
+                    savedPaths += out.absolutePath
                 }
-                else -> null
             }
-        } catch (_: Exception) {
-            toast("تعذر حفظ الصورة")
-            null
-        } finally {
-            pendingPhotoCallback = null
-        }
-
-        if (savedPath.isNullOrBlank()) {
-            toast("تعذر حفظ الصورة")
+        } catch (e: Exception) {
+            savedPaths.forEach { File(it).delete() }
+            clearPendingPhotoSelection(deleteFiles = true)
+            toast("تعذر تحميل الصور: ${e.message ?: "حدث خطأ غير معروف"}")
             return
         }
 
-        cb(savedPath)
-        toast("تم حفظ الصورة")
+        pendingPhotoPaths += savedPaths
+        showPendingPhotoReview()
+    }
+
+    private fun showPendingPhotoReview() {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(content)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("معاينة الصور (${pendingPhotoPaths.size})")
+            .setView(scroll)
+            .setPositiveButton("إضافة الصور", null)
+            .setNegativeButton("إلغاء") { _, _ ->
+                clearPendingPhotoSelection(deleteFiles = true)
+            }
+            .create()
+
+        pendingPhotoPaths.forEachIndexed { index, path ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+                setPadding(0, dp(4), 0, dp(4))
+            }
+            val image = ImageView(this).apply {
+                setImageBitmap(decodePreviewBitmap(path))
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            }
+            row.addView(image, LinearLayout.LayoutParams(dp(88), dp(76)))
+            val remove = Button(this).apply {
+                text = "حذف الصورة"
+                setOnClickListener {
+                    val removed = pendingPhotoPaths.removeAt(index)
+                    File(removed).delete()
+                    dialog.dismiss()
+                    if (pendingPhotoPaths.isEmpty()) {
+                        clearPendingPhotoSelection(deleteFiles = false)
+                        toast("تم حذف جميع الصور المحددة")
+                    } else {
+                        showPendingPhotoReview()
+                    }
+                }
+            }
+            row.addView(remove, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            content.addView(row, matchWidth())
+        }
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val callback = pendingPhotoCallback
+                val selected = pendingPhotoPaths.toList()
+                pendingPhotoCallback = null
+                pendingPhotoPaths.clear()
+                dialog.dismiss()
+                callback?.invoke(selected)
+                toast("تمت إضافة ${selected.size} صورة")
+            }
+        }
+        dialog.setOnCancelListener { clearPendingPhotoSelection(deleteFiles = true) }
+        dialog.show()
+    }
+
+    private fun clearPendingPhotoSelection(deleteFiles: Boolean) {
+        if (deleteFiles) pendingPhotoPaths.forEach { File(it).delete() }
+        pendingPhotoPaths.clear()
+        pendingPhotoCallback = null
+    }
+
+    private fun decodePreviewBitmap(path: String): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sampleSize = 1
+        while (bounds.outWidth / sampleSize > 640 || bounds.outHeight / sampleSize > 640) {
+            sampleSize *= 2
+        }
+        return BitmapFactory.decodeFile(
+            path,
+            BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        )
     }
 
     private fun showPhotoPreview(title: String, path: String) {
