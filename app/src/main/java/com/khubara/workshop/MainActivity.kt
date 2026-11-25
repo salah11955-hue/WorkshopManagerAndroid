@@ -192,6 +192,14 @@ class MainActivity : Activity() {
 
         items.forEach { (tab, icon, title) ->
             val isSelected = currentTab == tab
+            val tabAccent = when (tab) {
+                Tab.HOME -> teal
+                Tab.CUSTOMERS -> gold
+                Tab.VEHICLES -> Color.rgb(59, 130, 196)
+                Tab.WORK_ORDERS -> Color.rgb(217, 119, 6)
+                Tab.INVENTORY -> tealDark
+                Tab.MORE -> Color.rgb(100, 116, 139)
+            }
             val tabBox = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
@@ -227,7 +235,7 @@ class MainActivity : Activity() {
 
             val iconView = ImageView(this).apply {
                 setImageResource(icon)
-                setColorFilter(if (isSelected) tealDark else Color.rgb(100, 116, 139))
+                setColorFilter(if (isSelected) tealDark else tabAccent)
                 contentDescription = title
             }
             val labelTv = TextView(this).apply {
@@ -1043,42 +1051,44 @@ class MainActivity : Activity() {
 
         // إجراءات سريعة
         val actionsCard = createCard("إجراءات سريعة", teal)
-        val actionGrid = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+        val actionRows = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
-        actionGrid.addView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        var currentActionRow: LinearLayout? = null
+        var actionsInRow = 0
+        fun addDashboardAction(
+            title: String,
+            subtitle: String,
+            iconRes: Int,
+            accentColor: Int,
+            action: () -> Unit
+        ) {
+            if (currentActionRow == null || actionsInRow == 2) {
+                currentActionRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutDirection = View.LAYOUT_DIRECTION_RTL
+                }
+                actionRows.addView(currentActionRow, matchWidth())
+                actionsInRow = 0
             }
-        )
-        actionsCard.addView(actionGrid, matchWidth())
-        actionGrid.removeAllViews()
-
-        val leftActions = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addActionTile(currentActionRow!!, title, subtitle, iconRes, accentColor, action)
+            actionsInRow++
         }
-        val rightActions = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        actionGrid.addView(rightActions)
-        actionGrid.addView(leftActions)
 
-        addActionTile(rightActions, "استقبال سيارة", "تحقق من الملكية والسيارة", R.drawable.ic_nav_car, navyDark) {
+        addDashboardAction("استقبال سيارة", "تحقق من الملكية والسيارة", R.drawable.ic_nav_car, navyDark) {
             if (allowed("vehicles", "view")) navigateTo(Screen.RECEPTION)
         }
         if (db.hasPermission("work_orders", "add")) {
-            addActionTile(leftActions, "أمر شغل", "إضافة أمر إصلاح جديد", R.drawable.ic_nav_build, teal) { workOrderForm() }
+            addDashboardAction("أمر شغل", "إضافة أمر إصلاح جديد", R.drawable.ic_nav_build, teal) { workOrderForm() }
         }
         if (db.hasPermission("customers", "add")) {
-            addActionTile(rightActions, "عميل جديد", "إضافة بيانات عميل", R.drawable.ic_nav_person, gold) { customerForm() }
+            addDashboardAction("عميل جديد", "إضافة بيانات عميل", R.drawable.ic_nav_person, gold) { customerForm() }
         }
         if (db.hasPermission("vehicles", "add")) {
-            addActionTile(leftActions, "سيارة جديدة", "تسجيل مركبة", R.drawable.ic_nav_car, tealDark) { vehicleForm() }
+            addDashboardAction("سيارة جديدة", "تسجيل مركبة", R.drawable.ic_nav_car, tealDark) { vehicleForm() }
         }
+        actionsCard.addView(actionRows, matchWidth())
 
         // أحدث الأوامر والعملاء
         if (db.hasPermission("work_orders", "view")) {
