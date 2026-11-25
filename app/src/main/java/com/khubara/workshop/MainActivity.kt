@@ -482,23 +482,38 @@ class MainActivity : Activity() {
     private fun createCard(title: String, accentColor: Int = teal, cardBackground: Int = cardWhite): LinearLayout {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(14))
+            setPadding(dp(14), dp(13), dp(14), dp(14))
             background = GradientDrawable().apply {
                 setColor(cardBackground)
-                cornerRadius = dp(18).toFloat()
-                setStroke(dp(1), if (cardBackground == dangerRed) dangerDark else Color.rgb(232, 237, 243))
+                cornerRadius = dp(20).toFloat()
+                setStroke(dp(1), if (cardBackground == dangerRed) Color.rgb(220, 120, 120) else Color.rgb(228, 234, 241))
             }
-            elevation = dp(2).toFloat()
+            elevation = dp(3).toFloat()
         }
 
-        val titleTv = TextView(this).apply {
-            text = title
-            textSize = 15.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(if (cardBackground == dangerRed) Color.WHITE else accentColor)
-            setPadding(dp(2), 0, dp(2), dp(8))
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, dp(10))
         }
-        card.addView(titleTv, matchWidth())
+        if (cardBackground != dangerRed) {
+            titleRow.addView(
+                View(this).apply {
+                    background = GradientDrawable().apply {
+                        setColor(accentColor)
+                        cornerRadius = dp(99).toFloat()
+                    }
+                },
+                LinearLayout.LayoutParams(dp(4), dp(22)).apply { setMargins(0, 0, dp(8), 0) }
+            )
+        }
+        titleRow.addView(TextView(this).apply {
+            text = title
+            textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(if (cardBackground == dangerRed) Color.WHITE else textDark)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(titleRow, matchWidth())
 
         root.addView(card, matchWidth().apply { setMargins(0, 0, 0, dp(12)) })
         return card
@@ -513,16 +528,16 @@ class MainActivity : Activity() {
             val tile = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setPadding(dp(8), dp(10), dp(8), dp(10))
+                setPadding(dp(7), dp(12), dp(7), dp(12))
                 background = GradientDrawable().apply {
-                    setColor(Color.rgb(248, 250, 252))
+                    setColor(Color.rgb(242, 248, 248))
                     cornerRadius = dp(14).toFloat()
-                    setStroke(dp(1), borderLight)
+                    setStroke(dp(1), Color.rgb(221, 237, 235))
                 }
             }
             tile.addView(TextView(this).apply {
                 text = value
-                textSize = 21f
+                textSize = 22f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 setTextColor(tealDark)
@@ -542,6 +557,70 @@ class MainActivity : Activity() {
             )
         }
         parent.addView(grid, matchWidth().apply { setMargins(0, dp(4), 0, dp(6)) })
+    }
+
+    private fun addActionTile(
+        parent: LinearLayout,
+        title: String,
+        subtitle: String,
+        iconRes: Int,
+        accentColor: Int,
+        action: () -> Unit
+    ) {
+        val tile = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            minimumHeight = dp(82)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            val shape = GradientDrawable().apply {
+                setColor(Color.WHITE)
+                cornerRadius = dp(16).toFloat()
+                setStroke(dp(1), borderLight)
+            }
+            background = RippleDrawable(
+                ColorStateList.valueOf(Color.argb(28, 14, 165, 164)),
+                shape,
+                null
+            )
+            setOnClickListener { action() }
+        }
+        val iconBox = ImageView(this).apply {
+            setImageResource(iconRes)
+            setColorFilter(accentColor)
+            contentDescription = title
+            background = GradientDrawable().apply {
+                setColor(Color.argb(24, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor)))
+                cornerRadius = dp(13).toFloat()
+            }
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+        }
+        tile.addView(iconBox, LinearLayout.LayoutParams(dp(42), dp(42)))
+
+        val textBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(9), 0, dp(9), 0)
+        }
+        textBox.addView(TextView(this).apply {
+            text = title
+            textSize = 13.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(textDark)
+        }, matchWidth())
+        textBox.addView(TextView(this).apply {
+            text = subtitle
+            textSize = 11.5f
+            setTextColor(textMuted)
+            setPadding(0, dp(3), 0, 0)
+        }, matchWidth())
+        tile.addView(textBox, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        parent.addView(
+            tile,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(dp(4), dp(4), dp(4), dp(4))
+            }
+        )
     }
 
     private fun addText(
@@ -733,12 +812,13 @@ class MainActivity : Activity() {
                 "multiline" -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 else -> InputType.TYPE_CLASS_TEXT
             }
-            setPadding(dp(12), dp(11), dp(12), dp(11))
+            setPadding(dp(14), dp(13), dp(14), dp(13))
+            minHeight = dp(48)
             elevation = dp(1).toFloat()
             background = GradientDrawable().apply {
                 setColor(Color.WHITE)
-                cornerRadius = dp(11).toFloat()
-                setStroke(dp(1), borderLight)
+                cornerRadius = dp(14).toFloat()
+                setStroke(dp(1), Color.rgb(216, 224, 232))
             }
 
             if (suggestionKeys.isNotEmpty() &&
@@ -963,17 +1043,41 @@ class MainActivity : Activity() {
 
         // إجراءات سريعة
         val actionsCard = createCard("إجراءات سريعة", teal)
-        addPrimaryButton("استقبال سيارة والتحقق من الملكية", actionsCard, navyDark) {
+        val actionGrid = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        actionGrid.addView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+        )
+        actionsCard.addView(actionGrid, matchWidth())
+        actionGrid.removeAllViews()
+
+        val leftActions = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val rightActions = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        actionGrid.addView(rightActions)
+        actionGrid.addView(leftActions)
+
+        addActionTile(rightActions, "استقبال سيارة", "تحقق من الملكية والسيارة", R.drawable.ic_nav_car, navyDark) {
             if (allowed("vehicles", "view")) navigateTo(Screen.RECEPTION)
         }
         if (db.hasPermission("work_orders", "add")) {
-            addPrimaryButton("أمر شغل جديد", actionsCard, teal) { workOrderForm() }
+            addActionTile(leftActions, "أمر شغل", "إضافة أمر إصلاح جديد", R.drawable.ic_nav_build, teal) { workOrderForm() }
         }
         if (db.hasPermission("customers", "add")) {
-            addSecondaryButton("إضافة عميل جديد", actionsCard) { customerForm() }
+            addActionTile(rightActions, "عميل جديد", "إضافة بيانات عميل", R.drawable.ic_nav_person, gold) { customerForm() }
         }
         if (db.hasPermission("vehicles", "add")) {
-            addSecondaryButton("إضافة سيارة جديدة", actionsCard) { vehicleForm() }
+            addActionTile(leftActions, "سيارة جديدة", "تسجيل مركبة", R.drawable.ic_nav_car, tealDark) { vehicleForm() }
         }
 
         // أحدث الأوامر والعملاء
