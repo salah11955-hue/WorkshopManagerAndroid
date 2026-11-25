@@ -760,8 +760,12 @@ class MainActivity : Activity() {
         page("تسجيل الدخول", "مرحباً بك في الورشة", showBack = false, showBottomNav = false, darkAuthBackground = true)
 
         val card = createCard("بيانات الدخول", teal, cardWhite)
-        val username = field("اسم المستخدم")
-        val password = field("كلمة المرور", "password")
+        val username = field("اسم المستخدم").apply {
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+        }
+        val password = field("كلمة المرور", "password").apply {
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+        }
 
         listOf(username, password).forEach {
             card.addView(it, matchWidth().apply { setMargins(0, dp(5), 0, dp(7)) })

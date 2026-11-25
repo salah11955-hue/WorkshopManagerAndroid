@@ -11,8 +11,8 @@ android {
         applicationId = "com.khubara.workshop"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.7.0"
+        versionCode = 8
+        versionName = "0.7.1"
     }
 
     val keystoreFile = providers.environmentVariable("KEYSTORE_FILE").orNull
