@@ -11,11 +11,16 @@ import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.security.KeyStore
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.SecretKey
 
 data class CustomerProfile(
     val id: Long,
@@ -674,7 +679,7 @@ private fun createWorkOrderPhotosTable(db: SQLiteDatabase) {
                 )
             }
             db.setTransactionSuccessful()
-            true
+            return true
         } catch (_: Exception) {
             false
         } finally {
@@ -983,6 +988,12 @@ private fun createWorkOrderPhotosTable(db: SQLiteDatabase) {
         val cleanPhone = normalizePhone(phone)
         require(cleanName.isNotBlank()) { "يرجى إدخال اسم العميل" }
         require(cleanPhone.isNotBlank()) { "يرجى إدخال رقم هاتف صحيح" }
+        writableDatabase.rawQuery(
+            "SELECT id FROM customers WHERE phone=? LIMIT 1",
+            arrayOf(cleanPhone)
+        ).use { cursor ->
+            require(!cursor.moveToFirst()) { "رقم الهاتف مسجل لعميل آخر" }
+        }
 
         val values = ContentValues().apply {
             put("name", cleanName)
@@ -1013,6 +1024,12 @@ private fun createWorkOrderPhotosTable(db: SQLiteDatabase) {
         val cleanPhone = normalizePhone(phone)
         require(cleanName.isNotBlank()) { "يرجى إدخال اسم العميل" }
         require(cleanPhone.isNotBlank()) { "يرجى إدخال رقم هاتف صحيح" }
+        writableDatabase.rawQuery(
+            "SELECT id FROM customers WHERE phone=? AND id<>? LIMIT 1",
+            arrayOf(cleanPhone, customerId.toString())
+        ).use { cursor ->
+            require(!cursor.moveToFirst()) { "رقم الهاتف مسجل لعميل آخر" }
+        }
 
         val values = ContentValues().apply {
             put("name", cleanName)
@@ -1109,7 +1126,7 @@ private fun createWorkOrderPhotosTable(db: SQLiteDatabase) {
         transmission: String = "أوتوماتيك"
     ): Long {
         check(hasPermission("vehicles", "add")) { "ليس لديك صلاحية إضافة سيارة" }
-        val cleanPlate = plate.trim()
+        val cleanPlate = normalizePlate(plate)
         val cleanVin = normalizeVin(vin)
         require(cleanVin.length == 17) { "رقم الهيكل يجب أن يتكون من 17 خانة بالضبط" }
         require(!cleanVin.any { it in "IOQ" }) { "رقم الهيكل لا يسمح بالأحرف I و O و Q" }
@@ -1260,6 +1277,7 @@ fun getWorkOrderPhotos(
         val cleanName = name.trim()
         val cleanPhone = normalizePhone(phone)
         val cleanVin = normalizeVin(vin)
+        val cleanPlate = normalizePlate(plate)
         val reading = odometer.toLongOrNull() ?: 0L
         if (cleanName.isBlank() || cleanPhone.isBlank() || cleanVin.length != 17 || cleanVin.any { it in "IOQ" } || reading < 0L) {
             return null
@@ -1269,6 +1287,16 @@ fun getWorkOrderPhotos(
         var result: Pair<Long, Long>? = null
         try {
             db.beginTransaction()
+            db.rawQuery(
+                "SELECT id FROM customers WHERE phone=? LIMIT 1",
+                arrayOf(cleanPhone)
+            ).use { if (it.moveToFirst()) throw IllegalArgumentException("رقم الهاتف مسجل لعميل آخر") }
+            if (cleanPlate.isNotBlank()) {
+                db.rawQuery(
+                    "SELECT id FROM vehicles WHERE TRIM(plate)=? COLLATE NOCASE LIMIT 1",
+                    arrayOf(cleanPlate)
+                ).use { if (it.moveToFirst()) throw IllegalArgumentException("رقم اللوحة مسجل مسبقاً لسيارة أخرى") }
+            }
             val customerId = db.insertOrThrow(
                 "customers",
                 null,
@@ -1295,7 +1323,7 @@ fun getWorkOrderPhotos(
                     put("color", color.trim())
                     put("fuel_type", fuelType.trim().ifBlank { "بنزين" })
                     put("transmission", transmission.trim().ifBlank { "أوتوماتيك" })
-                    put("plate", plate.trim())
+                    put("plate", cleanPlate)
                     put("vin", cleanVin)
                     put("current_odometer", reading)
                     put("notes", vehicleNotes.trim())
@@ -2383,6 +2411,7 @@ fun getWorkOrderPhotos(
         val rootObj = JSONObject()
         rootObj.put("exported_at", todayString())
         rootObj.put("app", "خبراء هونداي وفورد")
+        rootObj.put("format_version", 2)
 
         val customersArr = JSONArray()
         getAllCustomers(limit = 2000).forEach { c ->
@@ -2458,14 +2487,24 @@ fun getWorkOrderPhotos(
             woArr.put(
                 JSONObject().apply {
                     put("id", w.id)
+                    put("customer_id", w.customerId)
+                    put("vehicle_id", w.vehicleId)
                     put("customer_name", w.customerName)
                     put("vehicle_name", w.vehicleName)
                     put("plate", w.vehiclePlate)
+                    put("odometer", w.odometer)
                     put("status", w.status)
                     put("priority", w.priority)
                     put("technician_name", w.technicianName)
                     put("complaint", w.complaint)
                     put("diagnosis", w.diagnosis)
+                    put("repair_notes", w.repairNotes)
+                    put("labor_cost", w.laborCost)
+                    put("parts_cost", w.partsCost)
+                    put("discount", w.discount)
+                    put("down_payment", w.downPayment)
+                    put("additional_paid", w.additionalPaid)
+                    put("expected_delivery", w.expectedDelivery)
                     put("total_cost", w.totalCost)
                     put("paid_amount", w.paidAmount)
                     put("remaining_amount", w.remainingAmount)
@@ -2474,6 +2513,25 @@ fun getWorkOrderPhotos(
             )
         }
         rootObj.put("work_orders", woArr)
+
+        val paymentsArr = JSONArray()
+        readableDatabase.rawQuery(
+            "SELECT work_order_id, amount, method, note, paid_at FROM work_order_payments ORDER BY id",
+            null
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                paymentsArr.put(
+                    JSONObject().apply {
+                        put("work_order_id", cursor.getLong(0))
+                        put("amount", cursor.getDouble(1))
+                        put("method", cursor.getString(2))
+                        put("note", cursor.getString(3))
+                        put("paid_at", cursor.getString(4))
+                    }
+                )
+            }
+        }
+        rootObj.put("work_order_payments", paymentsArr)
 
         val partsArr = JSONArray()
         getAllParts(limit = 2000).forEach { p ->
@@ -2496,9 +2554,205 @@ fun getWorkOrderPhotos(
         rootObj.put("parts", partsArr)
 
         val backupDir = File(appContext.filesDir, "backups").apply { mkdirs() }
-        val outFile = File(backupDir, "workshop_backup_${System.currentTimeMillis()}.json")
-        outFile.writeText(rootObj.toString(2), Charsets.UTF_8)
+        val outFile = File(backupDir, "workshop_backup_${System.currentTimeMillis()}.json.enc")
+        outFile.writeBytes(encryptBackup(rootObj.toString(2).toByteArray(Charsets.UTF_8)))
         return outFile
+    }
+
+    fun restoreBackupFile(file: File): Boolean {
+        require(file.isFile && file.length() > 0) { "ملف النسخة الاحتياطية غير صالح" }
+        val plaintext = decryptBackup(file.readBytes())
+        val root = JSONObject(plaintext.toString(Charsets.UTF_8))
+        require(root.optString("app") == "خبراء هونداي وفورد") { "هذا الملف ليس نسخة احتياطية لهذا التطبيق" }
+
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("PRAGMA defer_foreign_keys=ON")
+            listOf(
+                "work_order_payments",
+                "work_order_photos",
+                "work_order_parts",
+                "work_order_tasks",
+                "appointments",
+                "work_order_documents",
+                "vehicle_photos",
+                "vehicle_report_notes",
+                "work_orders",
+                "vehicles",
+                "vehicle_owners",
+                "parts",
+                "customers"
+            ).forEach { db.execSQL("DELETE FROM $it") }
+
+            val customerIds = mutableMapOf<Long, Long>()
+            val customersArray = root.optJSONArray("customers") ?: JSONArray()
+            for (i in 0 until customersArray.length()) {
+                val old = customersArray.getJSONObject(i)
+                val phone = normalizePhone(old.optString("phone"))
+                require(phone.isNotBlank()) { "توجد بيانات عميل برقم هاتف غير صالح" }
+                val values = ContentValues().apply {
+                    put("name", old.optString("name"))
+                    put("phone", phone)
+                    put("alternate_phones", old.optString("alternate_phones"))
+                    put("email", old.optString("email"))
+                    put("city", old.optString("city"))
+                    put("customer_type", old.optString("customer_type", "فرد"))
+                    put("address", old.optString("address"))
+                    put("notes", old.optString("notes"))
+                }
+                val newId = db.insertOrThrow("customers", null, values)
+                customerIds[old.optLong("id")] = newId
+            }
+
+            val vehicleIds = mutableMapOf<Long, Long>()
+            val vehiclesArray = root.optJSONArray("vehicles") ?: JSONArray()
+            for (i in 0 until vehiclesArray.length()) {
+                val old = vehiclesArray.getJSONObject(i)
+                val oldCustomerId = old.optLong("customer_id")
+                val newCustomerId = customerIds[oldCustomerId]
+                    ?: throw IllegalArgumentException("تحتوي النسخة على سيارة مرتبطة بعميل مفقود")
+                val plate = normalizePlate(old.optString("plate"))
+                val vin = normalizeVin(old.optString("vin"))
+                require(vin.length == 17) { "تحتوي النسخة على رقم هيكل غير صالح" }
+                val values = ContentValues().apply {
+                    put("customer_id", newCustomerId)
+                    put("make", old.optString("make"))
+                    put("model", old.optString("model"))
+                    val year = old.optInt("year", 0)
+                    if (year > 0) put("model_year", year)
+                    put("engine", old.optString("engine"))
+                    put("color", old.optString("color"))
+                    put("fuel_type", old.optString("fuel_type", "بنزين"))
+                    put("transmission", old.optString("transmission", "أوتوماتيك"))
+                    put("plate", plate)
+                    put("vin", vin)
+                    put("current_odometer", old.optLong("odometer"))
+                    put("notes", old.optString("notes"))
+                }
+                val newId = db.insertOrThrow("vehicles", null, values)
+                vehicleIds[old.optLong("id")] = newId
+            }
+
+            val workOrdersArray = root.optJSONArray("work_orders") ?: JSONArray()
+            val workOrderIds = mutableMapOf<Long, Long>()
+            for (i in 0 until workOrdersArray.length()) {
+                val old = workOrdersArray.getJSONObject(i)
+                val customerId = customerIds[old.optLong("customer_id")] ?: 0L
+                val vehicleId = vehicleIds[old.optLong("vehicle_id")] ?: 0L
+                if (customerId <= 0 || vehicleId <= 0) continue
+                val values = ContentValues().apply {
+                    put("customer_id", customerId)
+                    put("vehicle_id", vehicleId)
+                    put("odometer_at_visit", old.optLong("odometer"))
+                    put("complaint", old.optString("complaint"))
+                    put("diagnosis", old.optString("diagnosis"))
+                    put("repair_notes", old.optString("repair_notes"))
+                    put("status", old.optString("status", "مفتوح"))
+                    put("priority", old.optString("priority", "عادية"))
+                    put("technician_name", old.optString("technician_name"))
+                    put("expected_delivery", old.optString("expected_delivery"))
+                    put("labor_cost", old.optDouble("labor_cost"))
+                    put("parts_cost", old.optDouble("parts_cost"))
+                    put("discount", old.optDouble("discount"))
+                    put("down_payment", old.optDouble("down_payment"))
+                }
+                val newId = db.insertOrThrow("work_orders", null, values)
+                workOrderIds[old.optLong("id")] = newId
+            }
+
+            val paymentsArray = root.optJSONArray("work_order_payments") ?: JSONArray()
+            for (i in 0 until paymentsArray.length()) {
+                val old = paymentsArray.getJSONObject(i)
+                val workOrderId = workOrderIds[old.optLong("work_order_id")] ?: continue
+                val values = ContentValues().apply {
+                    put("work_order_id", workOrderId)
+                    put("amount", old.optDouble("amount"))
+                    put("method", old.optString("method", "نقدي"))
+                    put("note", old.optString("note"))
+                }
+                db.insertOrThrow("work_order_payments", null, values)
+            }
+
+            val reportNotesArray = root.optJSONArray("vehicle_report_notes") ?: JSONArray()
+            for (i in 0 until reportNotesArray.length()) {
+                val old = reportNotesArray.getJSONObject(i)
+                val vehicleId = vehicleIds[old.optLong("vehicle_id")] ?: continue
+                val values = ContentValues().apply {
+                    put("vehicle_id", vehicleId)
+                    put("customer_note", old.optString("customer_note"))
+                }
+                db.insertWithOnConflict(
+                    "vehicle_report_notes",
+                    null,
+                    values,
+                    SQLiteDatabase.CONFLICT_REPLACE
+                )
+            }
+
+            val partsArray = root.optJSONArray("parts") ?: JSONArray()
+            for (i in 0 until partsArray.length()) {
+                val old = partsArray.getJSONObject(i)
+                val values = ContentValues().apply {
+                    put("part_number", old.optString("part_number"))
+                    put("name", old.optString("name"))
+                    put("quantity", old.optDouble("quantity"))
+                    put("unit", old.optString("unit", "قطعة"))
+                    put("purchase_price", old.optDouble("purchase_price"))
+                    put("sale_price", old.optDouble("sale_price"))
+                    put("min_quantity", old.optDouble("min_quantity"))
+                    put("supplier", old.optString("supplier"))
+                    put("shelf_location", old.optString("shelf_location"))
+                    put("barcode", old.optString("barcode"))
+                }
+                db.insertOrThrow("parts", null, values)
+            }
+
+            db.setTransactionSuccessful()
+            return true
+        } finally {
+            if (db.inTransaction()) db.endTransaction()
+        }
+    }
+
+    private fun encryptBackup(plaintext: ByteArray): ByteArray {
+        val secret = getOrCreateBackupKey()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, secret)
+        val iv = cipher.iv
+        val ciphertext = cipher.doFinal(plaintext)
+        val envelope = ByteArray(12 + ciphertext.size)
+        System.arraycopy(iv, 0, envelope, 0, iv.size)
+        System.arraycopy(ciphertext, 0, envelope, iv.size, ciphertext.size)
+        return envelope
+    }
+
+    private fun decryptBackup(envelope: ByteArray): ByteArray {
+        require(envelope.size > 12) { "النسخة الاحتياطية تالفة" }
+        val secret = getOrCreateBackupKey()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        val iv = envelope.copyOfRange(0, 12)
+        cipher.init(Cipher.DECRYPT_MODE, secret, GCMParameterSpec(128, iv))
+        return cipher.doFinal(envelope, 12, envelope.size - 12)
+    }
+
+    private fun getOrCreateBackupKey(): SecretKey {
+        val alias = "workshop_manager_backup_key"
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (keyStore.containsAlias(alias)) {
+            return keyStore.getKey(alias, null) as SecretKey
+        }
+        val keyGenerator = KeyGenerator.getInstance("AES", "AndroidKeyStore")
+        val spec = android.security.keystore.KeyGenParameterSpec.Builder(
+            alias,
+            android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT
+        ).apply {
+            setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+            setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+            setRandomizedEncryptionRequired(true)
+        }.build()
+        keyGenerator.init(spec)
+        return keyGenerator.generateKey()
     }
 
     companion object {
@@ -2518,5 +2772,17 @@ fun getWorkOrderPhotos(
 
         fun normalizeVin(raw: String): String =
             raw.uppercase().filter { it.isLetterOrDigit() }
+
+        fun normalizePlate(raw: String): String =
+            raw.uppercase()
+                .trim()
+                .replace(Regex("[\\s-]+"), "")
+                .mapNotNull { ch ->
+                    when (ch) {
+                        in '٠'..'٩' -> ('0'.code + (ch.code - '٠'.code)).toChar()
+                        in '۰'..'۹' -> ('0'.code + (ch.code - '۰'.code)).toChar()
+                        else -> ch
+                    }
+                }.joinToString("")
     }
 }

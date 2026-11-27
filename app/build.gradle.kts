@@ -46,4 +46,5 @@ android {
 dependencies {
     implementation("androidx.core:core:1.13.1")
     implementation("com.google.zxing:core:3.5.3")
+    testImplementation("junit:junit:4.13.2")
 }

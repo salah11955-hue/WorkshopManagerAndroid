@@ -111,6 +111,7 @@ class MainActivity : Activity() {
     companion object {
         private const val REQ_CAPTURE_PHOTO = 9001
         private const val REQ_PICK_PHOTO = 9002
+        private const val REQ_RESTORE_BACKUP = 9003
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -2377,6 +2378,7 @@ class MainActivity : Activity() {
         addSecondaryButton("الفروع وسجل التدقيق", toolsCard) { branchesAndAuditDialog() }
         addSecondaryButton("البحث المتقدم الشامل", toolsCard) { navigateTo(Screen.SEARCH) }
         addPrimaryButton("تصدير نسخة احتياطية ومشاركتها", toolsCard, navyDark) { exportAndShareBackup() }
+        addSecondaryButton("استعادة نسخة احتياطية مشفرة", toolsCard) { chooseBackupForRestore() }
         addSecondaryButton("الإعدادات ومعرض الصور", toolsCard) { navigateTo(Screen.SETTINGS) }
 
         val acctCard = createCard("حسابي وإدارة المستخدمين", gold)
@@ -2518,7 +2520,7 @@ class MainActivity : Activity() {
 
             val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/json"
+                type = "application/octet-stream"
                 putExtra(Intent.EXTRA_SUBJECT, "نسخة احتياطية - خبراء هونداي وفورد")
                 putExtra(Intent.EXTRA_TEXT, "نسخة احتياطية من بيانات الورشة (${file.name})")
                 putExtra(Intent.EXTRA_STREAM, uri)
@@ -2528,6 +2530,22 @@ class MainActivity : Activity() {
         } catch (_: Exception) {
             toast("تعذر إنشاء النسخة الاحتياطية")
         }
+    }
+
+    private fun chooseBackupForRestore() {
+        AlertDialog.Builder(this)
+            .setTitle("استعادة النسخة الاحتياطية")
+            .setMessage("ستُستبدل بيانات التشغيل الحالية بالبيانات الموجودة في النسخة المشفرة. ننصح بتصدير نسخة قبل الاستعادة.")
+            .setPositiveButton("اختيار ملف النسخة") { _, _ ->
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/octet-stream", "application/json"))
+                }
+                startActivityForResult(intent, REQ_RESTORE_BACKUP)
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
     }
 
     // ---------------------------------------------------------
@@ -3851,6 +3869,30 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_RESTORE_BACKUP) {
+            if (resultCode != RESULT_OK) return
+            val uri = data?.data
+            if (uri == null) {
+                toast("لم يتم اختيار ملف")
+                return
+            }
+            val tempFile = File(cacheDir, "restore_${System.currentTimeMillis()}.enc")
+            try {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(tempFile).use { output -> input.copyTo(output) }
+                } ?: throw IllegalStateException("تعذر فتح ملف النسخة")
+                if (db.restoreBackupFile(tempFile)) {
+                    toast("تمت استعادة النسخة الاحتياطية بنجاح")
+                    loggedUser = db.currentUser()
+                    navigateTo(Screen.TAB_HOME, clearStack = true)
+                }
+            } catch (e: Exception) {
+                toast("تعذر استعادة النسخة: ${e.message ?: "الملف غير صالح"}")
+            } finally {
+                tempFile.delete()
+            }
+            return
+        }
         if (requestCode != REQ_PICK_PHOTO && requestCode != REQ_CAPTURE_PHOTO) return
         if (resultCode != RESULT_OK) {
             clearPendingPhotoSelection(deleteFiles = true)
